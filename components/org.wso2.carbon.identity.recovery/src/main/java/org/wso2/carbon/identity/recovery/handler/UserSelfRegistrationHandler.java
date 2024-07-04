@@ -47,7 +47,6 @@ import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
 import org.wso2.carbon.identity.recovery.store.JDBCRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.store.UserRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.util.Utils;
-import org.wso2.carbon.registry.core.utils.UUIDGenerator;
 import org.wso2.carbon.user.core.UserCoreConstants;
 import org.wso2.carbon.user.core.UserStoreException;
 import org.wso2.carbon.user.core.UserStoreManager;
@@ -150,7 +149,8 @@ public class UserSelfRegistrationHandler extends AbstractEventHandler {
                     userRecoveryDataStore.invalidate(user);
 
                     // Create a secret key based on the preferred notification channel.
-                    String secretKey = generateSecretKey(preferredChannel);
+                    String secretKey = Utils.generateSecretKey(preferredChannel, RecoveryScenarios.SELF_SIGN_UP.name(),
+                            tenantDomain, "SelfRegistration");
 
                     // Resolve event name.
                     String eventName = resolveEventName(preferredChannel, userName, domainName, tenantDomain);
@@ -427,7 +427,14 @@ public class UserSelfRegistrationHandler extends AbstractEventHandler {
         if (log.isDebugEnabled()) {
             log.debug("Sending self user registration notification user: " + user.getUserName());
         }
+
+        String serviceProviderUUID = (String) IdentityUtil.threadLocalProperties.get()
+                .get(IdentityRecoveryConstants.Consent.SERVICE_PROVIDER_UUID);
+
         HashMap<String, Object> properties = new HashMap<>();
+        if (serviceProviderUUID != null && !serviceProviderUUID.isEmpty()) {
+            properties.put(IdentityRecoveryConstants.Consent.SERVICE_PROVIDER_UUID, serviceProviderUUID);
+        }
         properties.put(IdentityEventConstants.EventProperty.USER_NAME, user.getUserName());
         properties.put(IdentityEventConstants.EventProperty.TENANT_DOMAIN, user.getTenantDomain());
         properties.put(IdentityEventConstants.EventProperty.USER_STORE_DOMAIN, user.getUserStoreDomain());
@@ -454,7 +461,15 @@ public class UserSelfRegistrationHandler extends AbstractEventHandler {
 
     private void triggerAccountCreationNotification(User user) throws IdentityRecoveryServerException {
         String eventName = IdentityEventConstants.Event.TRIGGER_NOTIFICATION;
+
+        String serviceProviderUUID = (String) IdentityUtil.threadLocalProperties.get()
+                .get(IdentityRecoveryConstants.Consent.SERVICE_PROVIDER_UUID);
+
         HashMap<String, Object> properties = new HashMap<>();
+        if (serviceProviderUUID != null && !serviceProviderUUID.isEmpty()) {
+
+            properties.put(IdentityRecoveryConstants.Consent.SERVICE_PROVIDER_UUID, serviceProviderUUID);
+        }
         properties.put(IdentityEventConstants.EventProperty.USER_NAME, user.getUserName());
         properties.put(IdentityEventConstants.EventProperty.TENANT_DOMAIN, user.getTenantDomain());
         properties.put(IdentityEventConstants.EventProperty.USER_STORE_DOMAIN, user.getUserStoreDomain());
@@ -473,43 +488,4 @@ public class UserSelfRegistrationHandler extends AbstractEventHandler {
                     user.getUserName(), e);
         }
     }
-
-    /**
-     * Generate an OTP for password recovery via mobile Channel
-     *
-     * @return OTP
-     */
-    private String generateSMSOTP() {
-
-        char[] chars = IdentityRecoveryConstants.SMS_OTP_GENERATE_CHAR_SET.toCharArray();
-        SecureRandom rnd = new SecureRandom();
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < IdentityRecoveryConstants.SMS_OTP_CODE_LENGTH; i++) {
-            sb.append(chars[rnd.nextInt(chars.length)]);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Generate a secret key according to the given channel. Method will generate an OTP for mobile channel and a
-     * UUID for other channels.
-     *
-     * @param channel Recovery notification channel.
-     * @return Secret key
-     */
-    private String generateSecretKey(String channel) {
-
-        if (NotificationChannels.SMS_CHANNEL.getChannelType().equals(channel)) {
-            if (log.isDebugEnabled()) {
-                log.debug("OTP was generated for the user for channel : " + channel);
-            }
-            return generateSMSOTP();
-        } else {
-            if (log.isDebugEnabled()) {
-                log.debug("UUID was generated for the user for channel : " + channel);
-            }
-            return UUIDGenerator.generateUUID();
-        }
-    }
-
 }

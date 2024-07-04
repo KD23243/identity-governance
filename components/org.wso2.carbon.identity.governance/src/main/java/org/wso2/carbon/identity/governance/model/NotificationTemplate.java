@@ -15,10 +15,15 @@
  */
 package org.wso2.carbon.identity.governance.model;
 
+import java.io.Serializable;
+import java.util.Objects;
+
 /**
  * Object which encapsulates notification template properties.
  */
-public class NotificationTemplate {
+public class NotificationTemplate implements Serializable {
+    
+    private static final long serialVersionUID = 1L;
 
     private String type;
     private String displayName;
@@ -187,5 +192,24 @@ public class NotificationTemplate {
     public void setBody(String body) {
 
         this.body = body;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        NotificationTemplate that = (NotificationTemplate) o;
+        return Objects.equals(type, that.type) && Objects.equals(displayName, that.displayName) &&
+                Objects.equals(locale, that.locale) && Objects.equals(body, that.body) &&
+                Objects.equals(contentType, that.contentType) &&
+                Objects.equals(notificationChannel, that.notificationChannel) &&
+                Objects.equals(subject, that.subject) && Objects.equals(footer, that.footer);
+    }
+
+    @Override
+    public int hashCode() {
+
+        return Objects.hash(type, displayName, locale, body, contentType, notificationChannel, subject, footer);
     }
 }

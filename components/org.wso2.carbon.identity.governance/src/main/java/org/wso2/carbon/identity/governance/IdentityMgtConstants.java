@@ -23,6 +23,7 @@ public class IdentityMgtConstants {
 
     public static final String USER_IDENTITY_CLAIMS = "UserIdentityClaims";
     public static final String ERROR_CODE_DELIMITER = "-";
+    public static final int MINIMUM_SMS_OTP_LENGTH = 4;
     private IdentityMgtConstants() {
 
     }
@@ -91,7 +92,14 @@ public class IdentityMgtConstants {
         ERROR_CODE_ERROR_RETRIEVING_TEMPLATE_FROM_REGISTRY("NTM-65002", "Error when retrieving '%s:%s' "
                 + "template from %s tenant registry"),
         ERROR_CODE_ERROR_RETRIEVING_TEMPLATE_OBJECT_FROM_REGISTRY("NTM-65003", "Error retrieving a "
-                + "template object from the registry resource");
+                + "template object from the registry resource"),
+
+        // OPG - OTP Generator
+        ERROR_CODE_INVALID_OTP_CHARACTER_SET("OPG-60010","OTP character set cannot be blank or " +
+                "in the incorrect format."),
+        ERROR_CODE_INVALID_OTP_LENGTH("OPG-60011","OTP length is invalid. Minimum length is " +
+                MINIMUM_SMS_OTP_LENGTH),
+        ERROR_CODE_ERROR_GENERATING_OTP("OPG-60012","An error occurred while generating the OTP.");
 
         private final String code;
         private final String message;
@@ -127,6 +135,7 @@ public class IdentityMgtConstants {
 
         public static final String NOTIFICATION_CHANNEL_MANAGER = "NCM";
         public static final String NOTIFICATION_TEMPLATE_MANAGER = "NTM";
+        public static final String OTP_GENERATOR = "OPG";
     }
 
     public static class PropertyConfig {
@@ -212,5 +221,19 @@ public class IdentityMgtConstants {
         private AccountStates() {
 
         }
+    }
+
+    /**
+     * OTP generator constants.
+     */
+    public static class OTPGeneratorConstants {
+
+        public static final int OTP_CODE_DEFAULT_LENGTH = 6;
+        public static final int OTP_CODE_MIN_LENGTH = 4;
+        public static final int OTP_CODE_MAX_LENGTH = 10;
+        public static final String OTP_GENERATE_ALPHABET_CHAR_SET_UPPERCASE = "ABCDEFGHJKLMNPRSTUVWXYZ";
+        public static final String OTP_GENERATE_ALPHABET_CHAR_SET_LOWERCASE = "abcdefghjkmnpqrstuvwxyz";
+        public static final String OTP_GENERATE_NUMERIC_CHAR_SET_WITH_ZERO = "0123456789";
+        public static final String OTP_GENERATE_NUMERIC_CHAR_SET_WITHOUT_ZERO = "123456789";
     }
 }

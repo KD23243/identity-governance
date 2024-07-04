@@ -37,6 +37,8 @@ public class CaptchaDataHolder {
 
     private boolean reCaptchaEnabled;
 
+    private String reCaptchaType;
+
     private String reCaptchaAPIUrl;
 
     private String reCaptchaVerifyUrl;
@@ -45,9 +47,19 @@ public class CaptchaDataHolder {
 
     private String reCaptchaSecretKey;
 
+    private String reCaptchaAPIKey;
+
+    private String reCaptchaProjectID;
+
     private String reCaptchaErrorRedirectUrls;
 
     private String reCaptchaRequestWrapUrls;
+
+    // Threshold for score in reCAPTCHA v3.
+    private double reCaptchaScoreThreshold;
+
+    // Threshold for score for warn logs in reCAPTCHA v3.
+    private double reCaptchaWarnScoreThreshold;
 
     private IdentityGovernanceService identityGovernanceService;
 
@@ -63,6 +75,8 @@ public class CaptchaDataHolder {
 
     private Map<String, String> passwordRecoveryReCaptchaConnectorPropertyMap = new HashMap<>();
 
+    private boolean forcefullyEnabledRecaptchaForAllTenants;
+
     private CaptchaDataHolder() {
 
     }
@@ -77,6 +91,26 @@ public class CaptchaDataHolder {
 
     public void setReCaptchaEnabled(boolean reCaptchaEnabled) {
         this.reCaptchaEnabled = reCaptchaEnabled;
+    }
+
+    public String getReCaptchaType() {
+
+        return reCaptchaType;
+    }
+
+    public void setReCaptchaType(String reCaptchaType) {
+
+        this.reCaptchaType = reCaptchaType;
+    }
+
+    public String getReCaptchaProjectID() {
+
+        return reCaptchaProjectID;
+    }
+
+    public void setReCaptchaProjectID(String reCaptchaProjectID) {
+
+        this.reCaptchaProjectID = reCaptchaProjectID;
     }
 
     public String getReCaptchaAPIUrl() {
@@ -111,12 +145,50 @@ public class CaptchaDataHolder {
         this.reCaptchaSecretKey = reCaptchaSecretKey;
     }
 
+    public String getReCaptchaAPIKey() {
+        return reCaptchaAPIKey;
+    }
+
+    public void setReCaptchaAPIKey(String reCaptchaAPIKey) {
+        this.reCaptchaAPIKey = reCaptchaAPIKey;
+    }
+
     public String getReCaptchaRequestWrapUrls() {
         return reCaptchaRequestWrapUrls;
     }
 
     public void setReCaptchaRequestWrapUrls(String reCaptchaRequestWrapUrls) {
         this.reCaptchaRequestWrapUrls = reCaptchaRequestWrapUrls;
+    }
+
+    public double getReCaptchaScoreThreshold() {
+
+        return reCaptchaScoreThreshold;
+    }
+
+    public void setReCaptchaScoreThreshold(double reCaptchaScoreThreshold) {
+
+        this.reCaptchaScoreThreshold = reCaptchaScoreThreshold;
+    }
+
+    /**
+     * Get the recaptcha score used as the threshold for printing warn logs.
+     *
+     * @return Recaptcha score threshold used for warning.
+     */
+    public double getReCaptchaWarnScoreThreshold() {
+
+        return reCaptchaWarnScoreThreshold;
+    }
+
+    /**
+     * Set the recaptcha score used as the threshold for printing warn logs.
+     *
+     * @param reCaptchaWarnScoreThreshold Recaptcha score threshold used for warning.
+     */
+    public void setReCaptchaWarnScoreThreshold(double reCaptchaWarnScoreThreshold) {
+
+        this.reCaptchaWarnScoreThreshold = reCaptchaWarnScoreThreshold;
     }
 
     public String getReCaptchaErrorRedirectUrls() {
@@ -185,5 +257,15 @@ public class CaptchaDataHolder {
 
     public void setAccountLockService(AccountLockService accountLockService) {
         this.accountLockService = accountLockService;
+    }
+
+    public boolean isForcefullyEnabledRecaptchaForAllTenants() {
+
+        return forcefullyEnabledRecaptchaForAllTenants;
+    }
+
+    public void setForcefullyEnabledRecaptchaForAllTenants(boolean forcefullyEnabledRecaptchaForAllTenants) {
+
+        this.forcefullyEnabledRecaptchaForAllTenants = forcefullyEnabledRecaptchaForAllTenants;
     }
 }

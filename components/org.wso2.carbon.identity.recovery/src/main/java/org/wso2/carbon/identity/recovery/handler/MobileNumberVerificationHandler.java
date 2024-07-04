@@ -49,7 +49,6 @@ import org.wso2.carbon.user.core.UserCoreConstants;
 import org.wso2.carbon.user.core.UserStoreException;
 import org.wso2.carbon.user.core.UserStoreManager;
 import org.wso2.carbon.user.core.service.RealmService;
-import org.wso2.carbon.user.core.util.UserCoreUtil;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -146,7 +145,8 @@ public class MobileNumberVerificationHandler extends AbstractEventHandler {
             userRecoveryDataStore.invalidate(user, RecoveryScenarios.MOBILE_VERIFICATION_ON_UPDATE,
                     RecoverySteps.VERIFY_MOBILE_NUMBER);
             String secretKey = Utils.generateSecretKey(NotificationChannels.SMS_CHANNEL.getChannelType(),
-                    user.getTenantDomain(), String.valueOf(RecoveryScenarios.MOBILE_VERIFICATION_ON_UPDATE));
+                    String.valueOf(RecoveryScenarios.MOBILE_VERIFICATION_ON_UPDATE), user.getTenantDomain(),
+                    "UserClaimUpdate");
             UserRecoveryData recoveryDataDO = new UserRecoveryData(user, secretKey,
                     RecoveryScenarios.MOBILE_VERIFICATION_ON_UPDATE, RecoverySteps.VERIFY_MOBILE_NUMBER);
             /* Mobile number is persisted in remaining set ids to maintain context information about the mobile number
@@ -242,6 +242,16 @@ public class MobileNumberVerificationHandler extends AbstractEventHandler {
             return;
         }
 
+        /*
+        Within the SMS OTP flow, the mobile number is updated in the user profile after successfully verifying the
+        OTP. Therefore, the mobile number is already verified & no need to verify it again.
+         */
+        if (IdentityRecoveryConstants.SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_SMS_OTP_FLOW.toString().equals
+                (Utils.getThreadLocalToSkipSendingSmsOtpVerificationOnUpdate())) {
+            invalidatePendingMobileVerification(user, userStoreManager, claims);
+            return;
+        }
+
         if (Utils.getThreadLocalToSkipSendingSmsOtpVerificationOnUpdate() != null) {
             Utils.unsetThreadLocalToSkipSendingSmsOtpVerificationOnUpdate();
         }
@@ -291,40 +301,12 @@ public class MobileNumberVerificationHandler extends AbstractEventHandler {
                 invalidatePendingMobileVerification(user, userStoreManager, claims);
                 return;
             }
-            // The verification should not happen if the claim update is invoked by a user other than the claim owner.
-            if (!isInvokedByUser(user)) {
-                Utils.setThreadLocalToSkipSendingSmsOtpVerificationOnUpdate(IdentityRecoveryConstants
-                        .SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_INAPPLICABLE_CLAIMS.toString());
-                return;
-            }
             claims.put(IdentityRecoveryConstants.MOBILE_NUMBER_PENDING_VALUE_CLAIM, mobileNumber);
             claims.remove(IdentityRecoveryConstants.MOBILE_NUMBER_CLAIM);
         } else {
             Utils.setThreadLocalToSkipSendingSmsOtpVerificationOnUpdate(IdentityRecoveryConstants
                     .SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_INAPPLICABLE_CLAIMS.toString());
         }
-    }
-
-    /**
-     * Verify whether the mobile number update is invoked by the user himself, but not by another privileged user
-     * on behalf.
-     *
-     * @param user  User whose claims are being updated.
-     * @return True if the user in the context is the same as the user whose claims are being updated, false otherwise.
-     * @throws IdentityEventException If username is not set in the CarbonContext.
-     */
-    private boolean isInvokedByUser(User user) throws IdentityEventException {
-
-        String usernameFromContext = PrivilegedCarbonContext.getThreadLocalCarbonContext().getUsername();
-        String tenantDomainFromContext = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
-        if (StringUtils.isNotBlank(usernameFromContext)) {
-            String userDomain = UserCoreUtil.extractDomainFromName(usernameFromContext);
-            User invokingUser = getUser(UserCoreUtil.removeDomainFromName(usernameFromContext), tenantDomainFromContext,
-                    userDomain);
-            return user.equals(invokingUser);
-        }
-        throw new IdentityEventException("Error while retrieving the username from CarbonContext during the " +
-                "mobile verification on update flow.");
     }
 
     /**
@@ -345,7 +327,9 @@ public class MobileNumberVerificationHandler extends AbstractEventHandler {
                     SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_EXISTING_MOBILE_NUM.toString().equals
                     (skipMobileNumVerificationOnUpdateState) && !IdentityRecoveryConstants
                     .SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_INAPPLICABLE_CLAIMS.toString().equals
-                            (skipMobileNumVerificationOnUpdateState)) {
+                            (skipMobileNumVerificationOnUpdateState) && !IdentityRecoveryConstants
+                    .SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_SMS_OTP_FLOW.toString().equals
+                    (skipMobileNumVerificationOnUpdateState)) {
 
                 String verificationPendingMobileNumClaim = getVerificationPendingMobileNumValue(userStoreManager, user);
 

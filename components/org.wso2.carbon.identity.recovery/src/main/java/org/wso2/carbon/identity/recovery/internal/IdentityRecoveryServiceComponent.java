@@ -1,18 +1,21 @@
 /*
- * Copyright (c) 2016, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2016, WSO2 LLC. (https://www.wso2.com).
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
+
 package org.wso2.carbon.identity.recovery.internal;
 
 import org.apache.commons.logging.Log;
@@ -27,6 +30,7 @@ import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
 import org.wso2.carbon.consent.mgt.core.ConsentManager;
 import org.wso2.carbon.identity.application.authentication.framework.handler.request.PostAuthenticationHandler;
+import org.wso2.carbon.identity.auth.attribute.handler.AuthAttributeHandlerManager;
 import org.wso2.carbon.identity.claim.metadata.mgt.ClaimMetadataManagementService;
 import org.wso2.carbon.identity.configuration.mgt.core.ConfigurationManager;
 import org.wso2.carbon.identity.consent.mgt.services.ConsentUtilityService;
@@ -35,9 +39,12 @@ import org.wso2.carbon.identity.event.handler.AbstractEventHandler;
 import org.wso2.carbon.identity.event.services.IdentityEventService;
 import org.wso2.carbon.identity.governance.IdentityGovernanceService;
 import org.wso2.carbon.identity.governance.common.IdentityConnectorConfig;
+import org.wso2.carbon.identity.governance.service.IdentityDataStoreService;
+import org.wso2.carbon.identity.governance.service.otp.OTPGenerator;
 import org.wso2.carbon.identity.handler.event.account.lock.service.AccountLockService;
+import org.wso2.carbon.identity.input.validation.mgt.services.InputValidationManagementService;
+import org.wso2.carbon.identity.input.validation.mgt.services.InputValidationManagementServiceImpl;
 import org.wso2.carbon.identity.multi.attribute.login.mgt.MultiAttributeLoginService;
-import org.wso2.carbon.identity.recovery.ChallengeQuestionManager;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryException;
 import org.wso2.carbon.identity.recovery.confirmation.ResendConfirmationManager;
 import org.wso2.carbon.identity.recovery.connector.AdminForcedPasswordResetConfigImpl;
@@ -48,7 +55,6 @@ import org.wso2.carbon.identity.recovery.connector.SelfRegistrationConfigImpl;
 import org.wso2.carbon.identity.recovery.connector.UserEmailVerificationConfigImpl;
 import org.wso2.carbon.identity.recovery.handler.AccountConfirmationValidationHandler;
 import org.wso2.carbon.identity.recovery.handler.AdminForcedPasswordResetHandler;
-import org.wso2.carbon.identity.recovery.handler.ChallengeAnswerValidationHandler;
 import org.wso2.carbon.identity.recovery.handler.CodeInvalidationHandler;
 import org.wso2.carbon.identity.recovery.handler.IdentityUserMetadataMgtHandler;
 import org.wso2.carbon.identity.recovery.handler.MobileNumberVerificationHandler;
@@ -56,18 +62,16 @@ import org.wso2.carbon.identity.recovery.handler.TenantRegistrationVerificationH
 import org.wso2.carbon.identity.recovery.handler.UserEmailVerificationHandler;
 import org.wso2.carbon.identity.recovery.handler.LiteUserRegistrationHandler;
 import org.wso2.carbon.identity.recovery.handler.UserSelfRegistrationHandler;
-import org.wso2.carbon.identity.recovery.handler.request.PostAuthnMissingChallengeQuestionsHandler;
 import org.wso2.carbon.identity.recovery.internal.service.impl.password.PasswordRecoveryManagerImpl;
 import org.wso2.carbon.identity.recovery.internal.service.impl.username.UsernameRecoveryManagerImpl;
 import org.wso2.carbon.identity.recovery.listener.TenantManagementListener;
 import org.wso2.carbon.identity.recovery.password.NotificationPasswordRecoveryManager;
-import org.wso2.carbon.identity.recovery.password.SecurityQuestionPasswordRecoveryManager;
 import org.wso2.carbon.identity.recovery.services.password.PasswordRecoveryManager;
 import org.wso2.carbon.identity.recovery.services.username.UsernameRecoveryManager;
 import org.wso2.carbon.identity.recovery.signup.UserSelfRegistrationManager;
 import org.wso2.carbon.identity.recovery.username.NotificationUsernameRecoveryManager;
 import org.wso2.carbon.identity.user.functionality.mgt.UserFunctionalityManager;
-import org.wso2.carbon.registry.core.service.RegistryService;
+import org.wso2.carbon.identity.user.profile.mgt.association.federation.FederatedAssociationManager;
 import org.wso2.carbon.stratos.common.listeners.TenantMgtListener;
 import org.wso2.carbon.user.core.service.RealmService;
 import org.wso2.carbon.utils.multitenancy.MultitenantConstants;
@@ -88,13 +92,9 @@ public class IdentityRecoveryServiceComponent {
             BundleContext bundleContext = context.getBundleContext();
             bundleContext.registerService(NotificationPasswordRecoveryManager.class.getName(),
                     NotificationPasswordRecoveryManager.getInstance(), null);
-            bundleContext.registerService(SecurityQuestionPasswordRecoveryManager.class.getName(),
-                    SecurityQuestionPasswordRecoveryManager.getInstance(), null);
             bundleContext.registerService(NotificationUsernameRecoveryManager.class.getName(),
                     NotificationUsernameRecoveryManager.getInstance(), null);
             bundleContext.registerService(UserSelfRegistrationManager.class.getName(), UserSelfRegistrationManager
-                    .getInstance(), null);
-            bundleContext.registerService(ChallengeQuestionManager.class.getName(), ChallengeQuestionManager
                     .getInstance(), null);
             bundleContext.registerService(ResendConfirmationManager.class.getName(), ResendConfirmationManager
                     .getInstance(), null);
@@ -132,29 +132,14 @@ public class IdentityRecoveryServiceComponent {
             PasswordRecoveryManager passwordRecoveryManager = new PasswordRecoveryManagerImpl();
             bundleContext.registerService(PasswordRecoveryManager.class.getName(),
                     passwordRecoveryManager, null);
-            // Registering missing challenge question handler as a post authn handler
-            PostAuthenticationHandler postAuthnMissingChallengeQuestions = PostAuthnMissingChallengeQuestionsHandler
-                    .getInstance();
-            bundleContext.registerService(PostAuthenticationHandler.class.getName(),
-                    postAuthnMissingChallengeQuestions, null);
-            bundleContext.registerService(AbstractEventHandler.class.getName(),
-                    new ChallengeAnswerValidationHandler(), null);
+            bundleContext.registerService(InputValidationManagementService.class.getName(),
+                    new InputValidationManagementServiceImpl(), null);
         } catch (Exception e) {
             log.error("Error while activating identity governance component.", e);
         }
         // register the tenant management listener
         TenantMgtListener tenantMgtListener = new TenantManagementListener();
         context.getBundleContext().registerService(TenantMgtListener.class.getName(), tenantMgtListener, null);
-        // register default challenge questions
-        try {
-            if (log.isDebugEnabled()) {
-                log.debug("Loading default challenge questions for super tenant.");
-            }
-            loadDefaultChallengeQuestions();
-            // new ChallengeQuestionManager().getAllChallengeQuestions("carbon.super", "lk_LK");
-        } catch (IdentityRecoveryException e) {
-            log.error("Error persisting challenge question for super tenant.", e);
-        }
     }
 
     @Deactivate
@@ -180,17 +165,17 @@ public class IdentityRecoveryServiceComponent {
     }
 
     @Reference(
-            name = "registry.service",
-            service = org.wso2.carbon.registry.core.service.RegistryService.class,
+            name = "otpgenerator.service",
+            service = org.wso2.carbon.identity.governance.service.otp.OTPGenerator.class,
             cardinality = ReferenceCardinality.MANDATORY,
             policy = ReferencePolicy.DYNAMIC,
-            unbind = "unsetRegistryService")
-    protected void setRegistryService(RegistryService registryService) {
+            unbind = "unsetOtpGenerator")
+    protected void setOtpGenerator(OTPGenerator otpGenerator) {
 
         if (log.isDebugEnabled()) {
-            log.debug("Setting the Registry Service");
+            log.debug("Setting the OTP Generator");
         }
-        dataHolder.setRegistryService(registryService);
+        dataHolder.setOtpGenerator(otpGenerator);
     }
 
     protected void unsetRealmService(RealmService realmService) {
@@ -199,10 +184,12 @@ public class IdentityRecoveryServiceComponent {
         dataHolder.setRealmService(null);
     }
 
-    protected void unsetRegistryService(RegistryService registryService) {
+    protected void unsetOtpGenerator(OTPGenerator otpGenerator) {
 
-        log.debug("UnSetting the Registry Service");
-        dataHolder.setRegistryService(null);
+        if (log.isDebugEnabled()) {
+            log.debug("UnSetting the OTP Generator");
+        }
+        dataHolder.setOtpGenerator(null);
     }
 
     protected void unsetIdentityEventService(IdentityEventService identityEventService) {
@@ -369,12 +356,6 @@ public class IdentityRecoveryServiceComponent {
         IdentityRecoveryServiceDataHolder.getInstance().setClaimMetadataManagementService(null);
     }
 
-    private void loadDefaultChallengeQuestions() throws IdentityRecoveryException {
-
-        String tenantDomain = MultitenantConstants.SUPER_TENANT_DOMAIN_NAME;
-        ChallengeQuestionManager.getInstance().setDefaultChallengeQuestions(tenantDomain);
-    }
-
     @Reference(
             name = "carbon.configuration.mgt.component",
             service = ConfigurationManager.class,
@@ -421,5 +402,86 @@ public class IdentityRecoveryServiceComponent {
     protected void unsetMultiAttributeLoginService(MultiAttributeLoginService multiAttributeLoginService) {
 
         dataHolder.getInstance().setMultiAttributeLoginService(null);
+    }
+
+    @Reference(
+            name = "org.wso2.carbon.identity.auth.attribute.handler.internal.AuthAttributeHandlerServiceComponent",
+            service = AuthAttributeHandlerManager.class,
+            cardinality = ReferenceCardinality.MANDATORY,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unsetAuthAttributeHandlerManager")
+    protected void setAuthAttributeHandlerManager(AuthAttributeHandlerManager authAttributeHandlerManager) {
+
+        log.debug("Auth Attribute Handler Manager service is set in recovery component.");
+        dataHolder.setAuthAttributeHandlerManager(authAttributeHandlerManager);
+    }
+
+    protected void unsetAuthAttributeHandlerManager(AuthAttributeHandlerManager authAttributeHandlerManager) {
+
+        log.debug("Auth Attribute Handler Manager service is unset in recovery component.");
+        dataHolder.setAuthAttributeHandlerManager(null);
+    }
+
+    /**
+     * Sets Input Validation Mgt OSGI Service.
+     *
+     * @param inputValidationMgtService     Input Validation Mgt OSGI Service.
+     */
+    @Reference(
+            name = "identity.input.validation.mgt.component",
+            service = InputValidationManagementService.class,
+            cardinality = ReferenceCardinality.MANDATORY,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unsetInputValidationMgtService")
+    protected void setInputValidationMgtService(InputValidationManagementService inputValidationMgtService) {
+
+        IdentityRecoveryServiceDataHolder.getInstance().setInputValidationMgtService(inputValidationMgtService);
+    }
+
+    /**
+     * Unsets Input Validation Mgt OSGI Service.
+     *
+     * @param inputValidationMgtService     Input Validation Mgt OSGI Service.
+     */
+    protected void unsetInputValidationMgtService(InputValidationManagementService inputValidationMgtService) {
+
+        IdentityRecoveryServiceDataHolder.getInstance().setInputValidationMgtService(null);
+    }
+
+    @Reference(
+            name = "identity.user.profile.mgt.component",
+            service = FederatedAssociationManager.class,
+            cardinality = ReferenceCardinality.MANDATORY,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unsetFederatedAssociationManagerService"
+    )
+    protected void setFederatedAssociationManagerService(FederatedAssociationManager
+                                                                 federatedAssociationManagerService) {
+
+        IdentityRecoveryServiceDataHolder.getInstance().setFederatedAssociationManager(
+                federatedAssociationManagerService);
+    }
+
+    protected void unsetFederatedAssociationManagerService(FederatedAssociationManager
+                                                                   federatedAssociationManagerService) {
+
+        IdentityRecoveryServiceDataHolder.getInstance().setFederatedAssociationManager(null);
+    }
+
+    @Reference(
+            name = "identity.governance.service",
+            service = IdentityDataStoreService.class,
+            cardinality = ReferenceCardinality.MANDATORY,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unsetIdentityDataStoreService"
+    )
+    protected void setIdentityDataStoreService(IdentityDataStoreService identityDataStoreService) {
+
+        IdentityRecoveryServiceDataHolder.getInstance().setIdentityDataStoreService(identityDataStoreService);
+    }
+
+    protected void unsetIdentityDataStoreService(IdentityDataStoreService identityDataStoreService) {
+
+        IdentityRecoveryServiceDataHolder.getInstance().setIdentityDataStoreService(null);
     }
 }

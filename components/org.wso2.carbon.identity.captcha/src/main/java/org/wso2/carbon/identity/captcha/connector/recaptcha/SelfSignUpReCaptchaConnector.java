@@ -44,7 +44,7 @@ public class SelfSignUpReCaptchaConnector extends AbstractReCaptchaConnector {
 
     private static final String SELF_REGISTRATION_INITIATE_URL = "/api/identity/recovery/v0.9/claims";
 
-    private static final String SELF_REGISTRATION_URL = "/api/identity/user/v0.9/me";
+    private static final String SELF_REGISTRATION_URL = "/api/identity/user/v1.0/me";
 
     private final String PROPERTY_ENABLE_RECAPTCHA = "SelfRegistration.ReCaptcha";
 
@@ -75,28 +75,17 @@ public class SelfSignUpReCaptchaConnector extends AbstractReCaptchaConnector {
         if (isUsernameRecovery != null) {
             return false;
         }
-
-        Property[] connectorConfigs;
-        try {
-            connectorConfigs = CaptchaUtil.getConnectorConfigs(servletRequest, identityGovernanceService,
-                    PROPERTY_ENABLE_RECAPTCHA);
-        } catch (Exception e) {
-            // Can happen due to invalid tenant/ invalid configuration
-            if (log.isDebugEnabled()) {
-                log.debug("Unable to load connector configuration.", e);
-            }
+        String requestMethod = ((HttpServletRequest) servletRequest).getMethod();
+        if (StringUtils.equalsIgnoreCase(path, SELF_REGISTRATION_URL) &&
+                StringUtils.equalsIgnoreCase(requestMethod, "GET")) {
             return false;
         }
-
-        String enable = null;
-        for (Property connectorConfig : connectorConfigs) {
-            if ((PROPERTY_ENABLE_RECAPTCHA).equals(connectorConfig.getName())) {
-                enable = connectorConfig.getValue();
-            }
+        if (CaptchaDataHolder.getInstance().isForcefullyEnabledRecaptchaForAllTenants()) {
+            return true;
         }
 
-        return Boolean.parseBoolean(enable);
-
+        return CaptchaUtil.isRecaptchaEnabledForConnector(identityGovernanceService, servletRequest,
+                PROPERTY_ENABLE_RECAPTCHA);
     }
 
     @Override

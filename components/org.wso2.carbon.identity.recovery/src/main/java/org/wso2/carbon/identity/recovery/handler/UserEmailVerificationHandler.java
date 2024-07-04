@@ -26,13 +26,16 @@ import org.wso2.carbon.identity.base.IdentityRuntimeException;
 import org.wso2.carbon.identity.core.bean.context.MessageContext;
 import org.wso2.carbon.identity.core.handler.InitConfig;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
+import org.wso2.carbon.identity.event.IdentityEventClientException;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
 import org.wso2.carbon.identity.event.handler.AbstractEventHandler;
 import org.wso2.carbon.identity.governance.IdentityMgtConstants;
+import org.wso2.carbon.identity.governance.service.notification.NotificationChannels;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryException;
+import org.wso2.carbon.identity.recovery.IdentityRecoveryServerException;
 import org.wso2.carbon.identity.recovery.RecoveryScenarios;
 import org.wso2.carbon.identity.recovery.RecoverySteps;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
@@ -41,7 +44,6 @@ import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
 import org.wso2.carbon.identity.recovery.store.JDBCRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.store.UserRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.util.Utils;
-import org.wso2.carbon.registry.core.utils.UUIDGenerator;
 import org.wso2.carbon.user.api.Claim;
 import org.wso2.carbon.user.core.UserCoreConstants;
 import org.wso2.carbon.user.core.UserStoreException;
@@ -53,6 +55,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
+
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_VERIFICATION_EMAIL_NOT_FOUND;
 
 public class UserEmailVerificationHandler extends AbstractEventHandler {
 
@@ -133,6 +138,11 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
                 // Not required to handle in this handler.
                 return;
             } else if (claims.containsKey(IdentityRecoveryConstants.VERIFY_EMAIL_CLIAM) && Boolean.parseBoolean(claims.get(IdentityRecoveryConstants.VERIFY_EMAIL_CLIAM))) {
+                if (!claims.containsKey(IdentityRecoveryConstants.EMAIL_ADDRESS_CLAIM)
+                        || StringUtils.isBlank(claims.get(IdentityRecoveryConstants.EMAIL_ADDRESS_CLAIM))) {
+                    throw new IdentityEventClientException(ERROR_CODE_VERIFICATION_EMAIL_NOT_FOUND.getCode(),
+                            ERROR_CODE_VERIFICATION_EMAIL_NOT_FOUND.getMessage());
+                }
                 Claim claim = new Claim();
                 claim.setClaimUri(IdentityRecoveryConstants.VERIFY_EMAIL_CLIAM);
                 claim.setValue(claims.get(IdentityRecoveryConstants.VERIFY_EMAIL_CLIAM));
@@ -172,7 +182,7 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
                 return;
                 // Not required to handle in this handler.
             } else if (IdentityRecoveryConstants.VERIFY_EMAIL_CLIAM.equals(claim.getClaimUri())) {
-                String confirmationCode = UUIDGenerator.generateUUID();
+                String confirmationCode = UUID.randomUUID().toString();
                 if (isNotificationInternallyManage) {
                     if (isAccountClaimExist) {
                         setUserClaim(IdentityRecoveryConstants.ACCOUNT_STATE_CLAIM_URI,
@@ -192,14 +202,25 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
                 Utils.publishRecoveryEvent(eventProperties, IdentityEventConstants.Event.POST_VERIFY_EMAIL_CLAIM,
                         confirmationCode);
             } else if (IdentityRecoveryConstants.ASK_PASSWORD_CLAIM.equals(claim.getClaimUri())) {
-                String confirmationCode = UUIDGenerator.generateUUID();
+                String confirmationCode;
+                try {
+                    confirmationCode = Utils.generateSecretKey(
+                            NotificationChannels.EMAIL_CHANNEL.getChannelType(), RecoveryScenarios.ASK_PASSWORD.name(),
+                            user.getTenantDomain(), "EmailVerification");
+                } catch (IdentityRecoveryServerException e) {
+                    throw new IdentityEventException("Error while fetching the OTP pattern ", e);
+                }
+                if (isAccountClaimExist) {
+                    setUserClaim(IdentityRecoveryConstants.ACCOUNT_STATE_CLAIM_URI,
+                            IdentityRecoveryConstants.PENDING_ASK_PASSWORD, userStoreManager, user);
+                }
                 if (isNotificationInternallyManage) {
-                    if (isAccountClaimExist) {
-                        setUserClaim(IdentityRecoveryConstants.ACCOUNT_STATE_CLAIM_URI,
-                                IdentityRecoveryConstants.PENDING_ASK_PASSWORD, userStoreManager, user);
-                    }
                     initNotification(user, RecoveryScenarios.ASK_PASSWORD, RecoverySteps.UPDATE_PASSWORD,
                             IdentityRecoveryConstants.NOTIFICATION_TYPE_ASK_PASSWORD, confirmationCode);
+                } else {
+                    setRecoveryData(user, RecoveryScenarios.ASK_PASSWORD, RecoverySteps.UPDATE_PASSWORD,
+                            confirmationCode);
+                    setAskPasswordConfirmationCodeToThreadLocal(confirmationCode);
                 }
 
                 // Need to lock user account.
@@ -212,6 +233,7 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
                 Utils.publishRecoveryEvent(eventProperties, IdentityEventConstants.Event.POST_ADD_USER_WITH_ASK_PASSWORD,
                         confirmationCode);
             }
+            Utils.clearEmailVerifyTemporaryClaim();
         }
 
         if (IdentityEventConstants.Event.PRE_SET_USER_CLAIMS.equals(eventName)) {
@@ -248,8 +270,13 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
     protected void initNotification(User user, Enum recoveryScenario, Enum recoveryStep, String notificationType)
             throws IdentityEventException {
 
-        String secretKey = UUIDGenerator.generateUUID();
-        initNotification(user, recoveryScenario, recoveryStep, notificationType, secretKey);
+        try {
+            String secretKey = Utils.generateSecretKey(NotificationChannels.EMAIL_CHANNEL.getChannelType(),
+                    recoveryScenario.name(), user.getTenantDomain(), "EmailVerification");
+            initNotification(user, recoveryScenario, recoveryStep, notificationType, secretKey);
+        } catch (IdentityRecoveryServerException e) {
+            throw new IdentityEventException("Error while fetching the OTP pattern ", e);
+        }
     }
 
     protected void initNotification(User user, Enum recoveryScenario, Enum recoveryStep, String notificationType,
@@ -287,8 +314,14 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
     private void initNotificationForEmailVerificationOnUpdate(String verificationPendingEmailAddress, User user)
             throws IdentityEventException {
 
-        String secretKey = UUIDGenerator.generateUUID();
-        initNotificationForEmailVerificationOnUpdate(user, secretKey, verificationPendingEmailAddress);
+        try {
+            String secretKey = Utils.generateSecretKey(NotificationChannels.EMAIL_CHANNEL.getChannelType(),
+                    RecoveryScenarios.EMAIL_VERIFICATION_ON_UPDATE.name(), user.getTenantDomain(),
+                    "UserClaimUpdate");
+            initNotificationForEmailVerificationOnUpdate(user, secretKey, verificationPendingEmailAddress);
+        } catch (IdentityRecoveryServerException e) {
+            throw new IdentityEventException("Error while fetching the OTP pattern ", e);
+        }
     }
 
     private void initNotificationForEmailVerificationOnUpdate(User user, String secretKey,
@@ -386,8 +419,13 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
         }
 
         String eventName = IdentityEventConstants.Event.TRIGGER_NOTIFICATION;
+        String serviceProviderUUID = (String) IdentityUtil.threadLocalProperties.get()
+                .get(IdentityRecoveryConstants.Consent.SERVICE_PROVIDER_UUID);
 
         HashMap<String, Object> properties = new HashMap<>();
+        if (serviceProviderUUID != null && !serviceProviderUUID.isEmpty()) {
+            properties.put(IdentityRecoveryConstants.Consent.SERVICE_PROVIDER_UUID, serviceProviderUUID);
+        }
         properties.put(IdentityEventConstants.EventProperty.USER_NAME, user.getUserName());
         properties.put(IdentityEventConstants.EventProperty.TENANT_DOMAIN, user.getTenantDomain());
         properties.put(IdentityEventConstants.EventProperty.USER_STORE_DOMAIN, user.getUserStoreDomain());
@@ -439,6 +477,16 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
         if (IdentityRecoveryConstants.SkipEmailVerificationOnUpdateStates.SKIP_ON_CONFIRM.toString().equals
                 (Utils.getThreadLocalToSkipSendingEmailVerificationOnUpdate())) {
             // Not required to handle in this handler.
+            return;
+        }
+
+        /*
+        Within the Email OTP flow, the email address is updated in the user profile after successfully verifying the
+        OTP. Therefore, the email is already verified & no need to verify it again.
+         */
+        if (IdentityRecoveryConstants.SkipEmailVerificationOnUpdateStates.SKIP_ON_EMAIL_OTP_FLOW.toString().equals
+                (Utils.getThreadLocalToSkipSendingEmailVerificationOnUpdate())) {
+            invalidatePendingEmailVerification(user, userStoreManager, claims);
             return;
         }
 
@@ -508,7 +556,9 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
                     SkipEmailVerificationOnUpdateStates.SKIP_ON_EXISTING_EMAIL.toString().equals
                     (skipEmailVerificationOnUpdateState) && !IdentityRecoveryConstants
                     .SkipEmailVerificationOnUpdateStates.SKIP_ON_INAPPLICABLE_CLAIMS.toString().equals
-                            (skipEmailVerificationOnUpdateState)) {
+                            (skipEmailVerificationOnUpdateState) && !IdentityRecoveryConstants
+                    .SkipEmailVerificationOnUpdateStates.SKIP_ON_EMAIL_OTP_FLOW.toString().equals
+                    (skipEmailVerificationOnUpdateState)) {
 
                 String pendingVerificationEmailClaimValue = getPendingVerificationEmailValue(userStoreManager, user);
 
@@ -686,6 +736,23 @@ public class UserEmailVerificationHandler extends AbstractEventHandler {
         } catch (IdentityEventException e) {
             throw new IdentityEventException("Error while sending notification for user: " +
                     user.toFullQualifiedUsername(), e);
+        }
+    }
+
+    /**
+     * To set the confirmation code to ask password thread local.
+     *
+     * @param confirmationCode Ask password confirmation code.
+     */
+    private void setAskPasswordConfirmationCodeToThreadLocal(String confirmationCode) {
+
+        Object initialValue = IdentityUtil.threadLocalProperties.get()
+                .get(IdentityRecoveryConstants.AP_CONFIRMATION_CODE_THREAD_LOCAL_PROPERTY);
+        if (initialValue != null && initialValue.toString()
+                .equals(IdentityRecoveryConstants.AP_CONFIRMATION_CODE_THREAD_LOCAL_INITIAL_VALUE)) {
+            IdentityUtil.threadLocalProperties.get()
+                    .put(IdentityRecoveryConstants.AP_CONFIRMATION_CODE_THREAD_LOCAL_PROPERTY,
+                            confirmationCode);
         }
     }
 }

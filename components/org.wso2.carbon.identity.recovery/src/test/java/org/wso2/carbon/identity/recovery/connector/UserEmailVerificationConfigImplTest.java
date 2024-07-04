@@ -92,10 +92,22 @@ public class UserEmailVerificationConfigImplTest {
         Map<String, String> nameMappingExpected = new HashMap<>();
         nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.ENABLE_EMAIL_VERIFICATION,
                 "Enable user email verification");
+        nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_SEND_OTP_IN_EMAIL,
+                "Send OTP in e-mail");
+        nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_UPPERCASE_CHARACTERS_IN_OTP,
+                "Include uppercase characters in OTP");
+        nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_LOWERCASE_CHARACTERS_IN_OTP,
+                "Include lowercase characters in OTP");
+        nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_NUMBERS_IN_OTP,
+                "Include numbers in OTP");
+        nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_OTP_LENGTH,
+                "OTP length");
         nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_ACCOUNT_LOCK_ON_CREATION,
                 "Enable account lock on creation");
         nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_NOTIFICATION_INTERNALLY_MANAGE,
                 "Manage notifications sending internally");
+        nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_NOTIFICATION_ACCOUNT_ACTIVATION,
+                "Send account activation email");
         nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_EXPIRY_TIME,
                 "Email verification code expiry time");
         nameMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.ASK_PASSWORD_EXPIRY_TIME,
@@ -114,11 +126,26 @@ public class UserEmailVerificationConfigImplTest {
         Map<String, String> descriptionMappingExpected = new HashMap<>();
         descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.ENABLE_EMAIL_VERIFICATION,
                 "A verification notification will be triggered during user creation.");
+        descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_SEND_OTP_IN_EMAIL,
+                "Enable to send OTP in verification e-mail instead of confirmation code.");
+        descriptionMappingExpected.put(
+                IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_UPPERCASE_CHARACTERS_IN_OTP,
+                "Enable to include uppercase characters in SMS and e-mail OTPs.");
+        descriptionMappingExpected.put(
+                IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_LOWERCASE_CHARACTERS_IN_OTP,
+                "Enable to include lowercase characters in SMS and e-mail OTPs.");
+        descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_NUMBERS_IN_OTP,
+                "Enable to include numbers in SMS and e-mail OTPs.");
+        descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_OTP_LENGTH,
+                "Length of the OTP for SMS and e-mail verifications. OTP length must be 4-10.");
         descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_ACCOUNT_LOCK_ON_CREATION,
                 "The user account will be locked during user creation.");
         descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.
                         EMAIL_VERIFICATION_NOTIFICATION_INTERNALLY_MANAGE,
                 "Disable if the client application handles notification sending.");
+        descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.
+                        EMAIL_VERIFICATION_NOTIFICATION_ACCOUNT_ACTIVATION,
+                "Disable if account activation confirmation email is not required.");
         descriptionMappingExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_EXPIRY_TIME,
                 "Set the time span that the verification e-mail would be valid, in minutes. (For infinite validity " +
                         "period, set -1)");
@@ -140,8 +167,14 @@ public class UserEmailVerificationConfigImplTest {
 
         List<String> propertiesExpected = new ArrayList<>();
         propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.ENABLE_EMAIL_VERIFICATION);
+        propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_SEND_OTP_IN_EMAIL);
+        propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_UPPERCASE_CHARACTERS_IN_OTP);
+        propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_LOWERCASE_CHARACTERS_IN_OTP);
+        propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_NUMBERS_IN_OTP);
+        propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_OTP_LENGTH);
         propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_ACCOUNT_LOCK_ON_CREATION);
         propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_NOTIFICATION_INTERNALLY_MANAGE);
+        propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_NOTIFICATION_ACCOUNT_ACTIVATION);
         propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_EXPIRY_TIME);
         propertiesExpected.add(IdentityRecoveryConstants.ConnectorConfig.ASK_PASSWORD_EXPIRY_TIME);
         String[] propertiesArrayExpected = propertiesExpected.toArray(new String[0]);
@@ -157,8 +190,14 @@ public class UserEmailVerificationConfigImplTest {
     public void testGetDefaultPropertyValues() throws IdentityGovernanceException {
 
         String testEnableEmailVerification = "false";
+        String testEnableSendOTPInEmail = "false";
+        String testUseUppercaseCharactersInOTP = "true";
+        String testUseLowercaseCharactersInOTP = "true";
+        String testUseNumbersInOTP = "true";
+        String testOtpLength = "6";
         String testEnableEmailAccountLockOnCreation = "true";
         String testEnableNotificationInternallyManage = "true";
+        String testSentNotificationOnAccountActivation = "true";
         String testEmailVerificationCodeExpiry = "1440";
         String testAskPasswordCodeExpiry = "1440";
         String testAskPasswordTempPassExtension = "org.wso2.carbon.user.mgt.common.DefaultPasswordGenerator";
@@ -166,6 +205,16 @@ public class UserEmailVerificationConfigImplTest {
         Map<String, String> defaultPropertiesExpected = new HashMap<>();
         defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.ENABLE_EMAIL_VERIFICATION,
                 testEnableEmailVerification);
+        defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_SEND_OTP_IN_EMAIL,
+                testEnableSendOTPInEmail);
+        defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_UPPERCASE_CHARACTERS_IN_OTP,
+                testUseUppercaseCharactersInOTP);
+        defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_LOWERCASE_CHARACTERS_IN_OTP,
+                testUseLowercaseCharactersInOTP);
+        defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_USE_NUMBERS_IN_OTP,
+                testUseNumbersInOTP);
+        defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_OTP_LENGTH,
+                testOtpLength);
         defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_EXPIRY_TIME,
                 testEmailVerificationCodeExpiry);
         defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.ASK_PASSWORD_EXPIRY_TIME,
@@ -174,6 +223,8 @@ public class UserEmailVerificationConfigImplTest {
                 testEnableEmailAccountLockOnCreation);
         defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_NOTIFICATION_INTERNALLY_MANAGE,
                 testEnableNotificationInternallyManage);
+        defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.EMAIL_VERIFICATION_NOTIFICATION_ACCOUNT_ACTIVATION,
+                testSentNotificationOnAccountActivation);
         defaultPropertiesExpected.put(IdentityRecoveryConstants.ConnectorConfig.ASK_PASSWORD_TEMP_PASSWORD_GENERATOR,
                 testAskPasswordTempPassExtension);
         try {

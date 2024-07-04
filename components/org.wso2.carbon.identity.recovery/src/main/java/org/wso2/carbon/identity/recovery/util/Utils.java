@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2016, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2016-2024, WSO2 LLC. (http://www.wso2.com).
  *
- * WSO2 Inc. licenses this file to you under the Apache License,
- *  Version 2.0 (the "License"); you may not use this file except
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -29,7 +29,12 @@ import org.wso2.carbon.CarbonConstants;
 import org.wso2.carbon.context.PrivilegedCarbonContext;
 import org.wso2.carbon.identity.application.common.model.Property;
 import org.wso2.carbon.identity.application.common.model.User;
+import org.wso2.carbon.identity.auth.attribute.handler.exception.AuthAttributeHandlerClientException;
+import org.wso2.carbon.identity.auth.attribute.handler.exception.AuthAttributeHandlerException;
+import org.wso2.carbon.identity.auth.attribute.handler.model.ValidationFailureReason;
+import org.wso2.carbon.identity.auth.attribute.handler.model.ValidationResult;
 import org.wso2.carbon.identity.base.IdentityException;
+import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
@@ -37,8 +42,10 @@ import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
 import org.wso2.carbon.identity.governance.IdentityGovernanceException;
 import org.wso2.carbon.identity.governance.IdentityGovernanceService;
+import org.wso2.carbon.identity.governance.exceptions.otp.OTPGeneratorException;
 import org.wso2.carbon.identity.governance.service.notification.NotificationChannelManager;
 import org.wso2.carbon.identity.governance.service.notification.NotificationChannels;
+import org.wso2.carbon.identity.governance.service.otp.OTPGenerator;
 import org.wso2.carbon.identity.handler.event.account.lock.exception.AccountLockServiceException;
 import org.wso2.carbon.identity.recovery.AuditConstants;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryClientException;
@@ -46,11 +53,11 @@ import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryException;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryServerException;
 import org.wso2.carbon.identity.recovery.RecoveryScenarios;
+import org.wso2.carbon.identity.recovery.exception.SelfRegistrationClientException;
+import org.wso2.carbon.identity.recovery.exception.SelfRegistrationException;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
-import org.wso2.carbon.identity.recovery.model.ChallengeQuestion;
 import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
 import org.wso2.carbon.identity.user.functionality.mgt.UserFunctionalityMgtConstants;
-import org.wso2.carbon.registry.core.utils.UUIDGenerator;
 import org.wso2.carbon.user.api.Claim;
 import org.wso2.carbon.user.api.ClaimManager;
 import org.wso2.carbon.user.api.RealmConfiguration;
@@ -71,7 +78,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLDecoder;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -80,9 +86,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+import static org.wso2.carbon.identity.auth.attribute.handler.AuthAttributeHandlerConstants.ErrorMessages.ERROR_CODE_AUTH_ATTRIBUTE_HANDLER_NOT_FOUND;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_REGISTRATION_OPTION;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_USER_ATTRIBUTES_FOR_REGISTRATION;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_UNEXPECTED_ERROR_VALIDATING_ATTRIBUTES;
 import static org.wso2.carbon.utils.CarbonUtils.isLegacyAuditLogsDisabled;
 
 /**
@@ -120,6 +131,8 @@ public class Utils {
             .ERROR_CODE_ERROR_DURING_PRE_UPDATE_CREDENTIAL.getCode()};
 
     private static final String PROPERTY_PASSWORD_ERROR_MSG = "PasswordJavaRegExViolationErrorMsg";
+
+    private static final String EMAIL_USERNAME_IDENTIFIER = "@";
 
     /**
      * Get an instance of the NotificationChannelManager.
@@ -400,17 +413,28 @@ public class Utils {
      * @return
      * @throws UserStoreException
      */
+    @Deprecated
     public static String doHash(String value) throws UserStoreException {
 
         try {
-            String digsestFunction = "SHA-256";
-            MessageDigest dgst = MessageDigest.getInstance(digsestFunction);
-            byte[] byteValue = dgst.digest(value.getBytes(StandardCharsets.UTF_8));
-            return Base64.encode(byteValue);
+            return hashCode(value);
         } catch (NoSuchAlgorithmException e) {
             log.error(e.getMessage(), e);
             throw new UserStoreException(e.getMessage(), e);
         }
+    }
+
+    /**
+     * @param value     Value to be hashed
+     * @return          Hashed value
+     * @throws NoSuchAlgorithmException If the algorithm is not found.
+     */
+    public static String hashCode(String value) throws NoSuchAlgorithmException {
+
+        String digsestFunction = "SHA-256";
+        MessageDigest dgst = MessageDigest.getInstance(digsestFunction);
+        byte[] byteValue = dgst.digest(value.getBytes(StandardCharsets.UTF_8));
+        return Base64.encode(byteValue);
     }
 
     /**
@@ -588,29 +612,6 @@ public class Utils {
         return components.length > 1 ? components[1] : components[0];
     }
 
-    public static ChallengeQuestion[] getDefaultChallengeQuestions() {
-
-        List<ChallengeQuestion> challengeQuestions = new ArrayList<>();
-        // locale en_US, challengeSet1
-        int count = 0;
-        for (String question : IdentityRecoveryConstants.Questions.SECRET_QUESTIONS_SET01) {
-            String setId = IdentityRecoveryConstants.WSO2CARBON_CLAIM_DIALECT + "/" + "challengeQuestion1";
-            String questionId = "question" + (++count);
-            challengeQuestions.add(
-                    new ChallengeQuestion(setId, questionId, question, IdentityRecoveryConstants.LOCALE_EN_US));
-        }
-
-        count = 0;
-        for (String question : IdentityRecoveryConstants.Questions.SECRET_QUESTIONS_SET02) {
-            String setId = IdentityRecoveryConstants.WSO2CARBON_CLAIM_DIALECT + "/" + "challengeQuestion2";
-            String questionId = "question" + (++count);
-            challengeQuestions.add(
-                    new ChallengeQuestion(setId, questionId, question, IdentityRecoveryConstants.LOCALE_EN_US));
-        }
-
-        return challengeQuestions.toArray(new ChallengeQuestion[challengeQuestions.size()]);
-    }
-
     public static boolean isAccountLocked(User user) throws IdentityRecoveryException {
 
         try {
@@ -716,6 +717,24 @@ public class Utils {
                     .toString();
         }
         return callbackURL;
+    }
+
+    /**
+     * Get isAccessUrlAvailable property value.
+     *
+     * @param properties Properties array.
+     * @return boolean value of the isAccessUrlAvailable property.
+     */
+    public static boolean isAccessUrlAvailable(org.wso2.carbon.identity.recovery.model.Property[] properties) {
+
+        if (properties != null) {
+            for (org.wso2.carbon.identity.recovery.model.Property property : properties) {
+                if (IdentityRecoveryConstants.IS_ACCESS_URL_AVAILABLE.equals(property.getKey())) {
+                    return Boolean.parseBoolean(property.getValue());
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -939,6 +958,22 @@ public class Utils {
     /**
      * Validate email username.
      *
+     * @param username Tenant aware username of the user.
+     * @throws IdentityRecoveryClientException If username is not an email when email username is enabled.
+     * @deprecated This method is deprecated. Use {@link #validateEmailUsername(User user)} instead.
+     */
+    @Deprecated
+    public static void validateEmailUsername(String username) throws IdentityRecoveryClientException {
+
+        if (IdentityUtil.isEmailUsernameEnabled()
+                && StringUtils.countMatches(username, EMAIL_USERNAME_IDENTIFIER) == 0) {
+            throw handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_USERNAME, username);
+        }
+    }
+
+    /**
+     * Validate email username.
+     *
      * @param user User .
      * @throws IdentityRecoveryClientException If username is not an email for tenanted users when email username
      * is enabled.
@@ -953,7 +988,7 @@ public class Utils {
             // Super tenant user should be able to log in with both email username or non-email username.
             return;
         }
-        if (StringUtils.countMatches(user.getUserName(), "@") == 0) {
+        if (StringUtils.countMatches(user.getUserName(), EMAIL_USERNAME_IDENTIFIER) == 0) {
             // For other tenants, user should have an email address as username.
             throw handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_USERNAME,
                     user.getUserName());
@@ -1055,18 +1090,41 @@ public class Utils {
     public static void createAuditMessage(String action, String target, JSONObject dataObject, String result) {
 
         if (!isLegacyAuditLogsDisabled()) {
-            String loggedInUser = PrivilegedCarbonContext.getThreadLocalCarbonContext().getUsername();
-            if (StringUtils.isBlank(loggedInUser)) {
-                loggedInUser = CarbonConstants.REGISTRY_SYSTEM_USERNAME;
-            }
-            String tenantDomain = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
-            loggedInUser = UserCoreUtil.addTenantDomainToEntry(loggedInUser, tenantDomain);
             AUDIT_LOG.info(String
-                    .format(AuditConstants.AUDIT_MESSAGE, loggedInUser, action, target, dataObject, result));
+                    .format(AuditConstants.AUDIT_MESSAGE, getInitiator(), action, maskIfRequired(target),
+                    dataObject, result));
         }
     }
 
     /**
+     * Get the initiator for audit logs.
+     *
+     * @return initiator based on whether log masking is enabled or not.
+     */
+    private static String getInitiator() {
+
+        String initiator = null;
+        String loggedInUser = PrivilegedCarbonContext.getThreadLocalCarbonContext().getUsername();
+        if (StringUtils.isBlank(loggedInUser)) {
+            loggedInUser = CarbonConstants.REGISTRY_SYSTEM_USERNAME;
+        }
+        String tenantDomain = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
+        if (LoggerUtils.isLogMaskingEnable) {
+            if (StringUtils.isNotBlank(loggedInUser) && StringUtils.isNotBlank(tenantDomain)) {
+                initiator = IdentityUtil.getInitiatorId(loggedInUser, tenantDomain);
+            }
+            if (StringUtils.isBlank(initiator)) {
+                initiator = LoggerUtils.getMaskedContent(UserCoreUtil.addTenantDomainToEntry(loggedInUser,
+                        tenantDomain));
+            }
+        } else {
+            initiator = UserCoreUtil.addTenantDomainToEntry(loggedInUser, tenantDomain);
+        }
+        return initiator;
+    }
+
+    /**
+     * This method is deprecated.
      * Generate a secret key according to the given channel. Method will generate an OTP for mobile channel and a
      * UUID for other channels. OTP is generated based on the defined regex.
      *
@@ -1074,70 +1132,131 @@ public class Utils {
      * @param tenantDomain     Tenant domain.
      * @param recoveryScenario Recovery scenario.
      * @return Secret key.
-     * @throws IdentityRecoveryServerException while getting password recovery sms otp regex.
+     * @throws IdentityRecoveryServerException while getting sms otp regex.
      */
+    @Deprecated
     public static String generateSecretKey(String channel, String tenantDomain, String recoveryScenario)
             throws IdentityRecoveryServerException {
 
         if (NotificationChannels.SMS_CHANNEL.getChannelType().equals(channel)) {
-            String charSet = IdentityRecoveryConstants.SMS_OTP_GENERATE_CHAR_SET;
             int otpLength = IdentityRecoveryConstants.SMS_OTP_CODE_LENGTH;
+            String otpRegex = null;
+            boolean useNumeric = true;
+            boolean useUppercaseLetters = true;
+            boolean useLowercaseLetters = true;
             if (StringUtils.equals(RecoveryScenarios.NOTIFICATION_BASED_PW_RECOVERY.name(), recoveryScenario)) {
-                String otpRegex = Utils.getRecoveryConfigs(IdentityRecoveryConstants.ConnectorConfig.
+                otpRegex = Utils.getRecoveryConfigs(IdentityRecoveryConstants.ConnectorConfig.
                         PASSWORD_RECOVERY_SMS_OTP_REGEX, tenantDomain);
-                if (!Pattern.matches(IdentityRecoveryConstants.VALID_SMS_OTP_REGEX_PATTERN, otpRegex)) {
-                    throw new IdentityRecoveryServerException(
-                            IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_UNSUPPORTED_SMS_OTP_REGEX.getCode(),
-                            IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_UNSUPPORTED_SMS_OTP_REGEX.getMessage());
-                }
-                String charsRegex = otpRegex.replaceAll("[{].*", "");
-                otpLength = Integer.parseInt(otpRegex.replaceAll(".*[{]", "").replaceAll("}", ""));
-                // Generate a charset based on regex.
-                charSet = generateCharSet(charsRegex);
+            } else if (StringUtils.equals(RecoveryScenarios.SELF_SIGN_UP.name(), recoveryScenario)) {
+                otpRegex = Utils.getRecoveryConfigs(IdentityRecoveryConstants.ConnectorConfig.
+                        SELF_REGISTRATION_SMS_OTP_REGEX, tenantDomain);
+            } else if (StringUtils.equals(RecoveryScenarios.LITE_SIGN_UP.name(), recoveryScenario)) {
+                otpRegex = Utils.getRecoveryConfigs(IdentityRecoveryConstants.ConnectorConfig.
+                        LITE_REGISTRATION_SMS_OTP_REGEX, tenantDomain);
             }
-            return generateSMSOTP(charSet, otpLength);
+            // If the OTP regex is not specified we need to ensure that the default behavior will be executed.
+            if (StringUtils.isNotBlank(otpRegex)) {
+                if (StringUtils.equals(RecoveryScenarios.NOTIFICATION_BASED_PW_RECOVERY.name(), recoveryScenario) ||
+                        StringUtils.equals(RecoveryScenarios.SELF_SIGN_UP.name(), recoveryScenario) ||
+                        StringUtils.equals(RecoveryScenarios.LITE_SIGN_UP.name(), recoveryScenario)) {
+                    if (!Pattern.matches(IdentityRecoveryConstants.VALID_SMS_OTP_REGEX_PATTERN, otpRegex)) {
+                        throw new IdentityRecoveryServerException(
+                                IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_UNSUPPORTED_SMS_OTP_REGEX.getCode(),
+                                IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_UNSUPPORTED_SMS_OTP_REGEX.getMessage());
+                    }
+                    String charsRegex = otpRegex.replaceAll("[{].*", "");
+                    otpLength = Integer.parseInt(otpRegex.replaceAll(".*[{]", "").replaceAll("}", ""));
+                    if (!charsRegex.contains("A-Z")) {
+                        useUppercaseLetters = false;
+                    }
+                    if (!charsRegex.contains("a-z")) {
+                        useLowercaseLetters = false;
+                    }
+                    if (!charsRegex.contains("0-9")) {
+                        useNumeric = false;
+                    }
+                }
+            }
+            try {
+                OTPGenerator otpGenerator = IdentityRecoveryServiceDataHolder.getInstance().getOtpGenerator();
+                return otpGenerator.generateOTP(useNumeric, useUppercaseLetters, useLowercaseLetters, otpLength,
+                        recoveryScenario);
+            } catch (OTPGeneratorException otpGeneratorException) {
+                throw new IdentityRecoveryServerException(otpGeneratorException.getErrorCode(),
+                        otpGeneratorException.getMessage());
+            }
         } else {
-            return UUIDGenerator.generateUUID();
+            return UUID.randomUUID().toString();
         }
     }
 
     /**
-     * Generate the compatible character set for the given regex.
+     * Generate a secret key according to the given channel. Method will generate an OTP for mobile channel, and an OTP
+     * for e-mail channel when 'sendOTPInEmail' property enabled. For other scenarios method will generate UUID.
      *
-     * @param regex The regular expression.
-     * @return Character set for the given regex.
+     * @param channel Recovery notification channel.
+     * @param recoveryScenario       Recovery scenario.
+     * @param tenantDomain           Tenant domain.
+     * @param connectorName          Connector name.
+     * @return Secret key.
+     * @throws IdentityRecoveryServerException while getting OTP generated.
      */
-    private static String generateCharSet(String regex) {
+    public static String generateSecretKey(String channel, String recoveryScenario, String tenantDomain, String connectorName)
+            throws IdentityRecoveryServerException {
 
-        StringBuilder charSet = new StringBuilder();
-        if (regex.contains("A-Z")) {
-            charSet.append(IdentityRecoveryConstants.SMS_OTP_GENERATE_ALPHABET_CHAR_SET);
+        // Set default OTP configuration values, for scenarios that don't have specific OTP configurations.
+        boolean useUppercase = true;
+        boolean useLowercase = true;
+        boolean useNumeric = true;
+        boolean sendOTPInEmail = false;
+        int otpLength = IdentityRecoveryConstants.OTP_CODE_DEFAULT_LENGTH;
+        // Set connector specific OTP configuration values, for connectors that have separate OTP configurations.
+        if (StringUtils.isNotBlank(connectorName)) {
+            sendOTPInEmail = Boolean.parseBoolean(getRecoveryConfigs(
+                    connectorName + ".OTP.SendOTPInEmail", tenantDomain));
+            useUppercase = Boolean.parseBoolean(getRecoveryConfigs(
+                    connectorName + ".OTP.UseUppercaseCharactersInOTP", tenantDomain));
+            useLowercase = Boolean.parseBoolean(getRecoveryConfigs(
+                    connectorName + ".OTP.UseLowercaseCharactersInOTP", tenantDomain));
+            useNumeric = Boolean.parseBoolean(getRecoveryConfigs(
+                    connectorName + ".OTP.UseNumbersInOTP", tenantDomain));
+            try {
+                otpLength = Integer.parseInt(Utils.getRecoveryConfigs(connectorName + ".OTP.OTPLength", tenantDomain));
+            } catch (NumberFormatException ex) {
+                log.warn("Configured OTP length is not a number. Hence using default length of "
+                        + IdentityRecoveryConstants.OTP_CODE_DEFAULT_LENGTH + " for OTP.");
+            }
         }
-        if (regex.contains("a-z")) {
-            charSet.append(IdentityRecoveryConstants.SMS_OTP_GENERATE_ALPHABET_CHAR_SET.toLowerCase());
+        if (NotificationChannels.SMS_CHANNEL.getChannelType().equals(channel) ||
+                RecoveryScenarios.ADMIN_FORCED_PASSWORD_RESET_VIA_OTP.name().equals(recoveryScenario) ||
+                sendOTPInEmail) {
+            try {
+                OTPGenerator otpGenerator = IdentityRecoveryServiceDataHolder.getInstance().getOtpGenerator();
+                return otpGenerator.generateOTP(useNumeric, useUppercase, useLowercase, otpLength,
+                        recoveryScenario);
+            } catch (OTPGeneratorException otpGeneratorException) {
+                throw new IdentityRecoveryServerException(otpGeneratorException.getErrorCode(),
+                        otpGeneratorException.getMessage());
+            }
         }
-        if (regex.contains("0-9")) {
-            charSet.append(IdentityRecoveryConstants.SMS_OTP_GENERATE_NUMERIC_CHAR_SET);
-        }
-        return charSet.toString();
+        return UUID.randomUUID().toString();
     }
 
     /**
-     * Generate an OTP for password recovery via mobile Channel.
+     * Concatenate recovery flow id with the generated secret key if the notification channel is email.
      *
-     * @param charSet   Matching character set for the defined regex.
-     * @param otpLength Length of OTP.
-     * @return OTP.
+     * @param recoveryFlowId      Recovery flow id.
+     * @param notificationChannel Recovery notification channel.
+     * @param secretKey           Secret Key.
+     * @return Secret key.
      */
-    private static String generateSMSOTP(String charSet, int otpLength) {
-
-        char[] chars = charSet.toCharArray();
-        SecureRandom rnd = new SecureRandom();
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < otpLength; i++) {
-            sb.append(chars[rnd.nextInt(chars.length)]);
+    public static String concatRecoveryFlowIdWithSecretKey(String recoveryFlowId, String notificationChannel,
+                                                           String secretKey) {
+        if (recoveryFlowId != null && (NotificationChannels.EMAIL_CHANNEL.getChannelType().equals(notificationChannel)
+                || NotificationChannels.EXTERNAL_CHANNEL.getChannelType().equals(notificationChannel))) {
+            secretKey = recoveryFlowId + IdentityRecoveryConstants.CONFIRMATION_CODE_SEPARATOR + secretKey;
         }
-        return sb.toString();
+        return secretKey;
     }
 
     /**
@@ -1167,6 +1286,33 @@ public class Utils {
                 }
             }
         } catch (org.wso2.carbon.user.core.UserStoreException e) {
+            log.error("Error occurred while retrieving UserStoreManager.", e);
+        }
+        return accountState;
+    }
+
+
+    /**
+     * Return user account state for user with username which is not domain qualified.
+     *
+     * @param user  User without domain qualified username.
+     * @return account state.
+     */
+    public static String getAccountStateForUserNameWithoutUserDomain(User user) {
+
+        String accountState = StringUtils.EMPTY;
+        try {
+            int tenantId = IdentityTenantUtil.getTenantId(user.getTenantDomain());
+            String username = UserCoreUtil.addDomainToName(user.getUserName(), user.getUserStoreDomain());
+            UserStoreManager userStoreManager = IdentityRecoveryServiceDataHolder.getInstance().getRealmService().
+                    getTenantUserRealm(tenantId).getUserStoreManager();
+            Map<String, String> claimMap =
+                    ((AbstractUserStoreManager) userStoreManager).getUserClaimValues(username,
+                            new String[]{IdentityRecoveryConstants.ACCOUNT_STATE_CLAIM_URI}, "default");
+            if (!claimMap.isEmpty() && claimMap.containsKey(IdentityRecoveryConstants.ACCOUNT_STATE_CLAIM_URI)) {
+                    accountState = claimMap.get(IdentityRecoveryConstants.ACCOUNT_STATE_CLAIM_URI);
+            }
+        } catch (UserStoreException e) {
             log.error("Error occurred while retrieving UserStoreManager.", e);
         }
         return accountState;
@@ -1227,21 +1373,46 @@ public class Utils {
      * Checks whether the existing confirmation code can be reused based on the configured email confirmation code
      * tolerance period.
      *
-     * @param recoveryDataDO Recovery data of the corresponding user.
+     * @param recoveryDataDO      Recovery data of the corresponding user.
      * @param notificationChannel Method which is used to send the recovery code. eg:- EMAIL, SMS.
      * @return True if the existing confirmation code can be used. Otherwise false.
      */
     public static boolean reIssueExistingConfirmationCode(UserRecoveryData recoveryDataDO, String notificationChannel) {
 
-        int codeToleranceInMinutes = getEmailCodeToleranceInMinutes();
-        if (recoveryDataDO != null && codeToleranceInMinutes != 0) {
-            if (RecoveryScenarios.NOTIFICATION_BASED_PW_RECOVERY.toString().
-                    equals(recoveryDataDO.getRecoveryScenario().toString())) {
-                long codeToleranceTimeInMillis = recoveryDataDO.getTimeCreated().getTime() +
-                        TimeUnit.MINUTES.toMillis(codeToleranceInMinutes);
-                return System.currentTimeMillis() < codeToleranceTimeInMillis;
-            }
+        if (recoveryDataDO == null) {
+            return false;
         }
+
+        int codeToleranceInMinutes = 0;
+        long codeToleranceTimeInMillis = 0;
+        String recoveryScenario = recoveryDataDO.getRecoveryScenario().toString();
+        if (RecoveryScenarios.NOTIFICATION_BASED_PW_RECOVERY.toString().equals(recoveryScenario)) {
+            codeToleranceInMinutes = getEmailCodeToleranceInMinutes();
+            codeToleranceTimeInMillis = recoveryDataDO.getTimeCreated().getTime() +
+                    TimeUnit.MINUTES.toMillis(codeToleranceInMinutes);
+            return System.currentTimeMillis() < codeToleranceTimeInMillis;
+        }
+
+        User user = recoveryDataDO.getUser();
+        if (user == null) {
+            return false;
+        }
+        String tenantDomain = user.getTenantDomain();
+        if (StringUtils.isEmpty(tenantDomain)) {
+            tenantDomain = MultitenantConstants.SUPER_TENANT_DOMAIN_NAME;
+        }
+        if (RecoveryScenarios.SELF_SIGN_UP.toString().equals(recoveryScenario)) {
+            codeToleranceInMinutes = getSelfRegistrationCodeToleranceInMinutes(tenantDomain, notificationChannel);
+            codeToleranceTimeInMillis = recoveryDataDO.getTimeCreated().getTime() +
+                    TimeUnit.MINUTES.toMillis(codeToleranceInMinutes);
+            return System.currentTimeMillis() < codeToleranceTimeInMillis;
+        } else if (RecoveryScenarios.ASK_PASSWORD.toString().equals(recoveryDataDO.getRecoveryScenario().toString())) {
+            codeToleranceInMinutes = getAskPasswordCodeExpiryTime(tenantDomain);
+            codeToleranceTimeInMillis = recoveryDataDO.getTimeCreated().getTime() +
+                    TimeUnit.MINUTES.toMillis(codeToleranceInMinutes);
+            return System.currentTimeMillis() < codeToleranceTimeInMillis;
+        }
+
         return false;
     }
 
@@ -1320,5 +1491,200 @@ public class Utils {
             log.error(message);
             return IdentityRecoveryConstants.RECOVERY_CODE_DEFAULT_EXPIRY_TIME;
         }
+    }
+
+    /**
+     * Retrieves the self registration confirmation code tolerance period in minutes.
+     *
+     * @param tenantDomain        Tenant domain of the user.
+     * @param notificationChannel Method which is used to send the recovery code. eg:- EMAIL, SMS, EXTERNAL.
+     * @return The self registration confirmation code tolerance in minutes.
+     */
+    private static int getSelfRegistrationCodeToleranceInMinutes(String tenantDomain, String notificationChannel) {
+
+        String selfRegistrationCodeTolerance = null;
+        String selfRegistrationCodeExpiryTime = null;
+        try {
+            // Getting the self registration confirmation code expiry time and tolerance period for the given channel.
+            if (NotificationChannels.EMAIL_CHANNEL.getChannelType().equalsIgnoreCase(notificationChannel)) {
+                selfRegistrationCodeTolerance = IdentityUtil.
+                        getProperty(IdentityRecoveryConstants.SELF_SIGN_UP_EMAIL_CONFIRMATION_CODE_TOLERANCE_PERIOD);
+                selfRegistrationCodeExpiryTime = getRecoveryConfigs(
+                        IdentityRecoveryConstants.ConnectorConfig.SELF_REGISTRATION_VERIFICATION_CODE_EXPIRY_TIME,
+                        tenantDomain);
+            } else if (NotificationChannels.SMS_CHANNEL.getChannelType().equalsIgnoreCase(notificationChannel)) {
+                selfRegistrationCodeTolerance = IdentityUtil.
+                        getProperty(IdentityRecoveryConstants.SELF_SIGN_UP_SMS_CONFIRMATION_CODE_TOLERANCE_PERIOD);
+                selfRegistrationCodeExpiryTime = getRecoveryConfigs(
+                        IdentityRecoveryConstants.ConnectorConfig
+                                .SELF_REGISTRATION_SMSOTP_VERIFICATION_CODE_EXPIRY_TIME, tenantDomain);
+            } else {
+                selfRegistrationCodeTolerance = IdentityUtil.
+                        getProperty(IdentityRecoveryConstants.SELF_SIGN_UP_EMAIL_CONFIRMATION_CODE_TOLERANCE_PERIOD);
+                selfRegistrationCodeExpiryTime = getRecoveryConfigs(
+                        IdentityRecoveryConstants.ConnectorConfig.SELF_REGISTRATION_VERIFICATION_CODE_EXPIRY_TIME,
+                        tenantDomain);
+            }
+        } catch (IdentityRecoveryServerException e) {
+            log.error("Error while retrieving self registration code recovery time.", e);
+            return IdentityRecoveryConstants.SELF_SIGN_UP_CODE_DEFAULT_TOLERANCE;
+        }
+
+        if (StringUtils.isEmpty(selfRegistrationCodeTolerance) || StringUtils.isEmpty(selfRegistrationCodeExpiryTime)) {
+            return IdentityRecoveryConstants.SELF_SIGN_UP_CODE_DEFAULT_TOLERANCE;
+        }
+
+        try {
+            int codeTolerance = Integer.parseInt(selfRegistrationCodeTolerance);
+            int codeExpiryTime = Integer.parseInt(selfRegistrationCodeExpiryTime);
+            // If the code expiry time is less than zero, code has infinite validity. Hence, we only need this
+            // condition to check whether the code expiry time is less than code tolerance when code expiry time is
+            // greater than or equal zero.
+            if (codeExpiryTime >= 0 && codeExpiryTime < codeTolerance) {
+                String message = String.format("Self registration code expiry time is less than code tolerance. " +
+                                "Therefore setting the DEFAULT time : %s minutes",
+                        IdentityRecoveryConstants.SELF_SIGN_UP_CODE_DEFAULT_TOLERANCE);
+                log.warn(message);
+                return IdentityRecoveryConstants.SELF_SIGN_UP_CODE_DEFAULT_TOLERANCE;
+            }
+            return codeTolerance;
+        } catch (NumberFormatException e) {
+            String message = String.format("Self registration confirmation code tolerance parsing is failed. " +
+                            "Therefore setting the DEFAULT time : %s minutes",
+                    IdentityRecoveryConstants.SELF_SIGN_UP_CODE_DEFAULT_TOLERANCE);
+            log.error(message);
+            return IdentityRecoveryConstants.SELF_SIGN_UP_CODE_DEFAULT_TOLERANCE;
+        }
+    }
+
+    /**
+     * Retrieves the ask password confirmation code tolerance period in minutes.
+     *
+     * @param tenantDomain Tenant domain of the user.
+     * @return The ask password confirmation code tolerance in minutes.
+     */
+    private static int getAskPasswordCodeExpiryTime(String tenantDomain) {
+
+        String askPasswordCodeTolerance = null;
+        String askPasswordCodeExpiryTime = null;
+        try {
+            askPasswordCodeTolerance = IdentityUtil.
+                    getProperty(IdentityRecoveryConstants.ASK_PASSWORD_CONFIRMATION_CODE_TOLERANCE_PERIOD);
+            askPasswordCodeExpiryTime = getRecoveryConfigs(
+                    IdentityRecoveryConstants.ConnectorConfig.ASK_PASSWORD_EXPIRY_TIME,
+                    tenantDomain);
+        } catch (IdentityRecoveryServerException e) {
+            log.error("Error while retrieving ask password code recovery time.", e);
+            return IdentityRecoveryConstants.ASK_PASSWORD_CODE_DEFAULT_TOLERANCE;
+        }
+
+        if (StringUtils.isEmpty(askPasswordCodeTolerance) || StringUtils.isEmpty(askPasswordCodeExpiryTime)) {
+            return IdentityRecoveryConstants.ASK_PASSWORD_CODE_DEFAULT_TOLERANCE;
+        }
+
+        try {
+            int codeTolerance = Integer.parseInt(askPasswordCodeTolerance);
+            int codeExpiryTime = Integer.parseInt(askPasswordCodeExpiryTime);
+            // If the code expiry time is less than zero, code has infinite validity. Hence, we only need this
+            // condition to check whether the code expiry time is less than code tolerance when code expiry time is
+            // greater than or equal zero.
+            if (codeExpiryTime >= 0 && codeExpiryTime < codeTolerance) {
+                String message = String.format("Ask password code expiry time is less than code tolerance. " +
+                                "Therefore setting the DEFAULT time : %s minutes",
+                        IdentityRecoveryConstants.ASK_PASSWORD_CODE_DEFAULT_TOLERANCE);
+                log.warn(message);
+                return IdentityRecoveryConstants.ASK_PASSWORD_CODE_DEFAULT_TOLERANCE;
+            }
+            return codeTolerance;
+        } catch (NumberFormatException e) {
+            String message = String.format("Ask password confirmation code tolerance parsing is failed. " +
+                            "Therefore setting the DEFAULT time : %s minutes",
+                    IdentityRecoveryConstants.ASK_PASSWORD_CODE_DEFAULT_TOLERANCE);
+            log.error(message);
+            return IdentityRecoveryConstants.ASK_PASSWORD_CODE_DEFAULT_TOLERANCE;
+        }
+    }
+
+    /**
+     * Handle the auth attribution validation failure.
+     *
+     * @param validationResult Validation result.
+     * @throws SelfRegistrationException Exception specific to the failing reason
+     */
+    public static void handleAttributeValidationFailure(ValidationResult validationResult)
+            throws SelfRegistrationException {
+
+        if (validationResult == null) {
+            throw new SelfRegistrationClientException(
+                    ERROR_CODE_UNEXPECTED_ERROR_VALIDATING_ATTRIBUTES.getCode(),
+                    ERROR_CODE_UNEXPECTED_ERROR_VALIDATING_ATTRIBUTES.getMessage(),
+                    "The attribute verification result is undefined.");
+        }
+        String errorDescription = "The mandatory attributes of the selected registration option are missing or empty " +
+                "in the request.";
+        if (validationResult.getValidationFailureReasons() != null) {
+            errorDescription = convertFailureReasonsToString(validationResult.getValidationFailureReasons());
+        }
+        throw new SelfRegistrationClientException(
+                ERROR_CODE_INVALID_USER_ATTRIBUTES_FOR_REGISTRATION.getCode(),
+                ERROR_CODE_INVALID_USER_ATTRIBUTES_FOR_REGISTRATION.getMessage(),
+                errorDescription);
+    }
+
+    /**
+     * Handle the exceptions thrown during attribute validation.
+     *
+     * @param e AuthAttributeHandlerException.
+     * @throws SelfRegistrationException Exception specific to the failing reason.
+     */
+    public static void handleAttributeValidationFailure(AuthAttributeHandlerException e)
+            throws SelfRegistrationException {
+
+        if (e instanceof AuthAttributeHandlerClientException
+                && ERROR_CODE_AUTH_ATTRIBUTE_HANDLER_NOT_FOUND.getCode().equals(e.getErrorCode())) {
+            throw new SelfRegistrationClientException(
+                    ERROR_CODE_INVALID_REGISTRATION_OPTION.getCode(),
+                    ERROR_CODE_INVALID_REGISTRATION_OPTION.getMessage(),
+                    e.getMessage());
+        }
+        throw new SelfRegistrationException(
+                ERROR_CODE_UNEXPECTED_ERROR_VALIDATING_ATTRIBUTES.getCode(),
+                ERROR_CODE_UNEXPECTED_ERROR_VALIDATING_ATTRIBUTES.getMessage(),
+                e.getMessage(),
+                e);
+    }
+
+    /**
+     * Mask the given value if it is required.
+     *
+     * @param value Value to be masked.
+     * @return Masked/unmasked value.
+     */
+    public static String maskIfRequired(String value) {
+
+        return LoggerUtils.isLogMaskingEnable ? LoggerUtils.getMaskedContent(value) : value;
+    }
+
+    /**
+     * Convert the validation failure reasons to a string.
+     *
+     * @param validationFailureReasons List of validation failure reasons.
+     * @return String of validation failure reasons.
+     */
+    private static String convertFailureReasonsToString(List<ValidationFailureReason> validationFailureReasons) {
+
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append("The following validation failures occurred against each attribute. ");
+        for (ValidationFailureReason validationFailureReason : validationFailureReasons) {
+            stringBuilder
+                    .append(validationFailureReason.getAuthAttribute())
+                    .append(" : ")
+                    .append(validationFailureReason.getErrorCode())
+                    .append(" ")
+                    .append(validationFailureReason.getReason())
+                    .append(",");
+        }
+        stringBuilder.deleteCharAt(stringBuilder.length() - 1);
+        return stringBuilder.toString();
     }
 }

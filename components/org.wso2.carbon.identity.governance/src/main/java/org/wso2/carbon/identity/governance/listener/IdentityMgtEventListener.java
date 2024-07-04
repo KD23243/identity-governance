@@ -24,6 +24,7 @@ import org.wso2.carbon.identity.core.AbstractIdentityUserOperationEventListener;
 import org.wso2.carbon.identity.core.model.IdentityErrorMsgContext;
 import org.wso2.carbon.identity.core.util.IdentityCoreConstants;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
+import org.wso2.carbon.identity.event.IdentityEventClientException;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
@@ -37,6 +38,7 @@ import org.wso2.carbon.tenant.mgt.util.TenantMgtUtil;
 import org.wso2.carbon.user.api.Permission;
 import org.wso2.carbon.user.api.TenantManager;
 import org.wso2.carbon.user.core.UserCoreConstants;
+import org.wso2.carbon.user.core.UserStoreClientException;
 import org.wso2.carbon.user.core.UserStoreException;
 import org.wso2.carbon.user.core.UserStoreManager;
 import org.wso2.carbon.user.core.common.AuthenticationResult;
@@ -50,6 +52,7 @@ import org.wso2.carbon.user.core.util.UserCoreUtil;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * This is an implementation of UserOperationEventListener. This defines
@@ -61,6 +64,7 @@ public class IdentityMgtEventListener extends AbstractIdentityUserOperationEvent
     private static final Log log = LogFactory.getLog(IdentityMgtEventListener.class);
     IdentityEventService eventMgtService = IdentityMgtServiceDataHolder.getInstance().getIdentityEventService();
     private static String RE_CAPTCHA_USER_DOMAIN = "user-domain-recaptcha";
+    private static final String USER_IDENTITY_CLAIMS_MAP = "UserIdentityClaimsMap";
 
     /**
      * USER_EXIST_THREAD_LOCAL_PROPERTY is used to maintain the state of user existence
@@ -192,6 +196,12 @@ public class IdentityMgtEventListener extends AbstractIdentityUserOperationEvent
         if (log.isDebugEnabled()) {
             log.debug("Pre add user is called in IdentityMgtEventListener");
         }
+        IdentityUtil.threadLocalProperties.get().remove(USER_IDENTITY_CLAIMS_MAP);
+        Map<String, String> identityClaims = claims.entrySet().stream()
+                .filter(claim -> claim.getKey().contains(UserCoreConstants.ClaimTypeURIs.IDENTITY_CLAIM_URI_PREFIX))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        IdentityUtil.threadLocalProperties.get().put(USER_IDENTITY_CLAIMS_MAP, identityClaims);
+
         String eventName = IdentityEventConstants.Event.PRE_ADD_USER;
         HashMap<String, Object> properties = new HashMap<>();
         properties.put(IdentityEventConstants.EventProperty.USER_CLAIMS, claims);
@@ -1757,6 +1767,9 @@ public class IdentityMgtEventListener extends AbstractIdentityUserOperationEvent
                         || IdentityCoreConstants.USER_ACCOUNT_DISABLED_ERROR_CODE.equals(errorCode)
                         || IdentityCoreConstants.USER_ACCOUNT_NOT_CONFIRMED_ERROR_CODE.equals(errorCode)) {
                     throw new UserStoreException(e.getMessage(), e);
+                }
+                if (e instanceof IdentityEventClientException) {
+                    throw new UserStoreClientException(e.getMessage(), errorCode, e);
                 }
             }
 

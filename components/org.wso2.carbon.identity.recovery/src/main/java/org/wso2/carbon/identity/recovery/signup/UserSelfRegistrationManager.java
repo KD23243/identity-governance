@@ -1,18 +1,17 @@
 /*
+ * Copyright (c) 2016, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
  *
- * Copyright (c) 2016, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
- *
- * WSO2 Inc. licenses this file to you under the Apache License,
- *  Version 2.0 (the "License"); you may not use this file except
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
+ * KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
@@ -35,9 +34,11 @@ import org.wso2.carbon.consent.mgt.core.model.Purpose;
 import org.wso2.carbon.consent.mgt.core.model.ReceiptInput;
 import org.wso2.carbon.consent.mgt.core.model.ReceiptServiceInput;
 import org.wso2.carbon.context.PrivilegedCarbonContext;
-import org.wso2.carbon.core.util.AnonymousSessionUtil;
 import org.wso2.carbon.identity.application.common.model.IdentityProvider;
 import org.wso2.carbon.identity.application.common.model.User;
+import org.wso2.carbon.identity.auth.attribute.handler.AuthAttributeHandlerManager;
+import org.wso2.carbon.identity.auth.attribute.handler.exception.AuthAttributeHandlerException;
+import org.wso2.carbon.identity.auth.attribute.handler.model.ValidationResult;
 import org.wso2.carbon.identity.base.IdentityException;
 import org.wso2.carbon.identity.consent.mgt.exceptions.ConsentUtilityServiceException;
 import org.wso2.carbon.identity.consent.mgt.services.ConsentUtilityService;
@@ -54,6 +55,13 @@ import org.wso2.carbon.identity.governance.exceptions.notiification.Notification
 import org.wso2.carbon.identity.governance.exceptions.notiification.NotificationChannelManagerException;
 import org.wso2.carbon.identity.governance.service.notification.NotificationChannelManager;
 import org.wso2.carbon.identity.governance.service.notification.NotificationChannels;
+import org.wso2.carbon.identity.input.validation.mgt.exceptions.InputValidationMgtClientException;
+import org.wso2.carbon.identity.input.validation.mgt.exceptions.InputValidationMgtException;
+import org.wso2.carbon.identity.input.validation.mgt.model.RulesConfiguration;
+import org.wso2.carbon.identity.input.validation.mgt.model.ValidationConfiguration;
+import org.wso2.carbon.identity.input.validation.mgt.model.ValidationContext;
+import org.wso2.carbon.identity.input.validation.mgt.model.Validator;
+import org.wso2.carbon.identity.input.validation.mgt.utils.Constants;
 import org.wso2.carbon.identity.mgt.policy.PolicyViolationException;
 import org.wso2.carbon.identity.recovery.AuditConstants;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryClientException;
@@ -62,21 +70,19 @@ import org.wso2.carbon.identity.recovery.IdentityRecoveryException;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryServerException;
 import org.wso2.carbon.identity.recovery.RecoveryScenarios;
 import org.wso2.carbon.identity.recovery.RecoverySteps;
+import org.wso2.carbon.identity.recovery.UserWorkflowManagementService;
 import org.wso2.carbon.identity.recovery.bean.NotificationResponseBean;
 import org.wso2.carbon.identity.recovery.confirmation.ResendConfirmationManager;
+import org.wso2.carbon.identity.recovery.exception.SelfRegistrationClientException;
+import org.wso2.carbon.identity.recovery.exception.SelfRegistrationException;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
 import org.wso2.carbon.identity.recovery.model.Property;
 import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
 import org.wso2.carbon.identity.recovery.store.JDBCRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.store.UserRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.util.Utils;
-import org.wso2.carbon.identity.workflow.mgt.WorkflowManagementService;
-import org.wso2.carbon.identity.workflow.mgt.WorkflowManagementServiceImpl;
-import org.wso2.carbon.identity.workflow.mgt.bean.Entity;
-import org.wso2.carbon.identity.workflow.mgt.exception.WorkflowException;
 import org.wso2.carbon.idp.mgt.IdentityProviderManagementException;
 import org.wso2.carbon.idp.mgt.IdentityProviderManager;
-import org.wso2.carbon.registry.core.utils.UUIDGenerator;
 import org.wso2.carbon.user.api.Claim;
 import org.wso2.carbon.user.api.RealmConfiguration;
 import org.wso2.carbon.user.api.UserStoreException;
@@ -92,20 +98,26 @@ import org.wso2.carbon.utils.multitenancy.MultitenantUtils;
 
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
-import java.security.SecureRandom;
+import java.net.URISyntaxException;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AUDIT_FAILED;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AUDIT_SUCCESS;
+import static org.wso2.carbon.identity.input.validation.mgt.utils.Constants.Configs.USERNAME;
+import static org.wso2.carbon.identity.input.validation.mgt.utils.Constants.ErrorMessages.ERROR_GETTING_EXISTING_CONFIGURATIONS;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_MULTIPLE_REGISTRATION_OPTIONS;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.SIGNUP_PROPERTY_REGISTRATION_OPTION;
 
 /**
  * Manager class which can be used to recover passwords using a notification.
@@ -117,6 +129,8 @@ public class UserSelfRegistrationManager {
     private static UserSelfRegistrationManager instance = new UserSelfRegistrationManager();
     private static final String PURPOSE_GROUP_SELF_REGISTER = "SELF-SIGNUP";
     private static final String PURPOSE_GROUP_TYPE_SYSTEM = "SYSTEM";
+    private static final String AUTH_ATTRIBUTE_USERNAME = "username";
+    private static final String AUTH_ATTRIBUTE_PASSWORD = "password";
 
     private UserSelfRegistrationManager() {
 
@@ -142,11 +156,13 @@ public class UserSelfRegistrationManager {
         // Callback URL validation
         String callbackURL = null;
         try {
-            callbackURL = Utils.getCallbackURLFromRegistration(properties);
-            if (StringUtils.isNotBlank(callbackURL) && !Utils.validateCallbackURL(callbackURL, tenantDomain,
-                    IdentityRecoveryConstants.ConnectorConfig.SELF_REGISTRATION_CALLBACK_REGEX)) {
-                throw Utils.handleServerException(
-                        IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_CALLBACK_URL_NOT_VALID, callbackURL);
+            if (!Utils.isAccessUrlAvailable(properties)) {
+                callbackURL = Utils.getCallbackURLFromRegistration(properties);
+                if (StringUtils.isNotBlank(callbackURL) && !Utils.validateCallbackURL(callbackURL, tenantDomain,
+                        IdentityRecoveryConstants.ConnectorConfig.SELF_REGISTRATION_CALLBACK_REGEX)) {
+                    throw Utils.handleServerException(
+                            IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_CALLBACK_URL_NOT_VALID, callbackURL);
+                }
             }
         } catch (MalformedURLException | UnsupportedEncodingException | IdentityEventException e) {
             throw Utils.handleServerException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_CALLBACK_URL_NOT_VALID,
@@ -302,7 +318,8 @@ public class UserSelfRegistrationManager {
             UserRecoveryDataStore userRecoveryDataStore = JDBCRecoveryDataStore.getInstance();
             userRecoveryDataStore.invalidate(user);
 
-            String secretKey = UUIDGenerator.generateUUID();
+            String secretKey = Utils.generateSecretKey(preferredChannel, RecoveryScenarios.SELF_SIGN_UP.name(),
+                    user.getTenantDomain(), "SelfRegistration");
             UserRecoveryData recoveryDataDO = new UserRecoveryData(user, secretKey, RecoveryScenarios.SELF_SIGN_UP,
                     RecoverySteps.CONFIRM_SIGN_UP);
             recoveryDataDO.setRemainingSetIds(NotificationChannels.EXTERNAL_CHANNEL.getChannelType());
@@ -713,14 +730,9 @@ public class UserSelfRegistrationManager {
         // Validate context tenant domain name with user tenant domain.
         validateContextTenantDomainWithUserTenantDomain(user);
 
-        // Validate the recovery step to confirm self sign up or to verify email account.
-        if (!RecoverySteps.CONFIRM_SIGN_UP.equals(recoveryData.getRecoveryStep()) &&
-                !RecoverySteps.VERIFY_EMAIL.equals(recoveryData.getRecoveryStep()) &&
-                !RecoverySteps.CONFIRM_LITE_SIGN_UP.equals(recoveryData.getRecoveryStep())) {
-            auditRecoveryConfirm(recoveryData,
-                    IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_CODE.getMessage(), AUDIT_FAILED);
-            throw Utils.handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_CODE, null);
-        }
+        // Validate the recovery step to confirm self sign up, to verify email account or to verify mobile number.
+        validateRecoverySteps(recoveryData, user);
+
         // Get the userstore manager for the user.
         UserStoreManager userStoreManager = getUserStoreManager(user);
         Map<String, Object> eventProperties = new HashMap<>();
@@ -744,7 +756,7 @@ public class UserSelfRegistrationManager {
 
         // Get the claims that needs to be updated.
         // NOTE: Verification channel is stored in Remaining_Sets in user recovery data.
-        HashMap<String, String> userClaims = getClaimsListToUpdate(user, recoveryData.getRemainingSetIds(),
+        HashMap<String, String> userClaims = getClaimsListToUpdate(user, verifiedChannelType,
                 externallyVerifiedClaim, recoveryData.getRecoveryScenario().toString());
 
         if (RecoverySteps.VERIFY_EMAIL.equals(recoveryData.getRecoveryStep())) {
@@ -756,6 +768,16 @@ public class UserSelfRegistrationManager {
                 // Todo passes when email address is properly set here.
                 Utils.setThreadLocalToSkipSendingEmailVerificationOnUpdate(IdentityRecoveryConstants
                         .SkipEmailVerificationOnUpdateStates.SKIP_ON_CONFIRM.toString());
+            }
+        }
+        if (RecoverySteps.VERIFY_MOBILE_NUMBER.equals(recoveryData.getRecoveryStep())) {
+            String pendingMobileClaimValue = recoveryData.getRemainingSetIds();
+            if (StringUtils.isNotBlank(pendingMobileClaimValue)) {
+                userClaims.put(IdentityRecoveryConstants.MOBILE_NUMBER_PENDING_VALUE_CLAIM, StringUtils.EMPTY);
+                userClaims.put(IdentityRecoveryConstants.MOBILE_NUMBER_CLAIM, pendingMobileClaimValue);
+                // Todo passes when mobile number is properly set here.
+                Utils.setThreadLocalToSkipSendingSmsOtpVerificationOnUpdate(IdentityRecoveryConstants
+                        .SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_CONFIRM.toString());
             }
         }
         // Update the user claims.
@@ -771,6 +793,42 @@ public class UserSelfRegistrationManager {
         auditRecoveryConfirm(recoveryData, null, AUDIT_SUCCESS);
         return recoveryData;
     }
+
+    private void validateRecoverySteps(UserRecoveryData recoveryData, User user)
+            throws IdentityRecoveryServerException, IdentityRecoveryClientException {
+
+        if (!RecoverySteps.CONFIRM_SIGN_UP.equals(recoveryData.getRecoveryStep()) &&
+                !RecoverySteps.VERIFY_EMAIL.equals(recoveryData.getRecoveryStep()) &&
+                !RecoverySteps.CONFIRM_LITE_SIGN_UP.equals(recoveryData.getRecoveryStep()) &&
+                !RecoverySteps.VERIFY_MOBILE_NUMBER.equals(recoveryData.getRecoveryStep())) {
+            auditRecoveryConfirm(recoveryData,
+                    IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_CODE.getMessage(), AUDIT_FAILED);
+            throw Utils.handleClientException(
+                    IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_UNSUPPORTED_PREFERRED_CHANNELS, null);
+        }
+        if (RecoverySteps.VERIFY_MOBILE_NUMBER.equals(recoveryData.getRecoveryStep()) &&
+                !isMobileVerificationEnabledForPrivilegedUsers(user.getTenantDomain())) {
+            throw Utils.handleClientException(
+                    IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_MOBILE_VERIFICATION_NOT_ENABLE_PRIVILEGED_USERS,
+                    null);
+        }
+    }
+
+    private boolean isMobileVerificationEnabledForPrivilegedUsers(String tenantDomain)
+            throws IdentityRecoveryServerException {
+
+        try {
+            return Boolean.parseBoolean(
+                    Utils.getConnectorConfig(
+                            IdentityRecoveryConstants.ConnectorConfig.ENABLE_MOBILE_VERIFICATION_BY_PRIVILEGED_USER,
+                            tenantDomain));
+        } catch (IdentityEventException e) {
+            throw Utils.handleServerException(
+                    IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_ERROR_GETTING_CONNECTOR_CONFIG,
+                    tenantDomain, e);
+        }
+    }
+
 
     /**
      * Introspects self registration confirmation code details without invalidating it.
@@ -797,6 +855,10 @@ public class UserSelfRegistrationManager {
 
         // Validate context tenant domain name with user tenant domain.
         validateContextTenantDomainWithUserTenantDomain(user);
+
+        // Validate the recovery step to confirm self sign up, to verify email account or to verify mobile number.
+        validateRecoverySteps(recoveryData, user);
+
         return recoveryData;
     }
 
@@ -1174,6 +1236,30 @@ public class UserSelfRegistrationManager {
     }
 
     /**
+     * Checks whether the given userstore domain of a username is valid / exists or not.
+     *
+     * @param userStoreDomain Userstore domain of the user.
+     * @return True if the userstore domain of the user is valid / available, else false.
+     */
+    public boolean isValidUserStoreDomain(String userStoreDomain, String tenantDomain) throws IdentityRecoveryException {
+
+        boolean isValidUserStore;
+        try {
+            UserStoreManager userStoreManager = getUserRealm(tenantDomain).getUserStoreManager().
+                    getSecondaryUserStoreManager(userStoreDomain);
+            isValidUserStore = userStoreManager != null;
+
+        } catch (CarbonException | UserStoreException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("Error while getting secondary userstore manager for domain " + userStoreDomain);
+            }
+            // In a case of a non existing tenant.
+            throw new IdentityRecoveryException("Error while retrieving user realm for tenant : " + tenantDomain, e);
+        }
+        return isValidUserStore;
+    }
+
+    /**
      * Returns whether a given username is already taken by a user or not.
      *
      * @param username Username.
@@ -1198,25 +1284,39 @@ public class UserSelfRegistrationManager {
     public boolean isUsernameAlreadyTaken(String username, String tenantDomain) throws IdentityRecoveryException {
 
         boolean isUsernameAlreadyTaken = true;
-        WorkflowManagementService workflowService = new WorkflowManagementServiceImpl();
+
         if (StringUtils.isBlank(tenantDomain)) {
             tenantDomain = MultitenantUtils.getTenantDomain(username);
+            // If tenant domain is not provided, domain from the username is assumed to be the tenant domain.
+            username = MultitenantUtils.getTenantAwareUsername(username);
         }
         try {
-            String tenantAwareUsername = MultitenantUtils.getTenantAwareUsername(username);
-            Entity userEntity = new Entity(tenantAwareUsername, IdentityRecoveryConstants.ENTITY_TYPE_USER,
-                    IdentityTenantUtil.getTenantId(tenantDomain));
-
             UserRealm userRealm = getUserRealm(tenantDomain);
             if (userRealm != null) {
-                isUsernameAlreadyTaken = userRealm.getUserStoreManager().isExistingUser(tenantAwareUsername) ||
-                        workflowService.entityHasPendingWorkflowsOfType(userEntity,
-                                IdentityRecoveryConstants.ADD_USER_EVENT);
+                isUsernameAlreadyTaken = userRealm.getUserStoreManager().isExistingUser(username) ||
+                        hasPendingAddUserWorkflow(username, tenantDomain);
             }
-        } catch (CarbonException | org.wso2.carbon.user.core.UserStoreException | WorkflowException e) {
+        } catch (CarbonException | org.wso2.carbon.user.core.UserStoreException e) {
             throw new IdentityRecoveryException("Error while retrieving user realm for tenant : " + tenantDomain, e);
         }
         return isUsernameAlreadyTaken;
+    }
+
+    private boolean hasPendingAddUserWorkflow(String username, String tenantDomain)
+                                        throws IdentityRecoveryException {
+
+        try{
+            UserWorkflowManagementService userWorkflowManagementService = (UserWorkflowManagementService)
+                    PrivilegedCarbonContext.getThreadLocalCarbonContext().
+                            getOSGiService(UserWorkflowManagementService.class, null);
+            if (userWorkflowManagementService != null) {
+                return userWorkflowManagementService.isUserExists(username, tenantDomain);
+            }
+            return false;
+        } catch (NullPointerException e) {
+            log.debug("UserWorkflowManagementService is not available.");
+            return false;
+        }
     }
 
     /**
@@ -1337,9 +1437,13 @@ public class UserSelfRegistrationManager {
 
     private UserRealm getUserRealm(String tenantDomain) throws CarbonException {
 
-        return AnonymousSessionUtil.getRealmByTenantDomain(IdentityRecoveryServiceDataHolder.getInstance()
-                        .getRegistryService(), IdentityRecoveryServiceDataHolder.getInstance().getRealmService(),
-                tenantDomain);
+        RealmService realmService = IdentityRecoveryServiceDataHolder.getInstance().getRealmService();
+        try {
+            int tenantId = realmService.getTenantManager().getTenantId(tenantDomain);
+            return (UserRealm) realmService.getTenantUserRealm(tenantId);
+        } catch (UserStoreException e) {
+            throw new CarbonException(e);
+        }
     }
 
     /**
@@ -1384,6 +1488,46 @@ public class UserSelfRegistrationManager {
      */
     private boolean checkUserNameValid(String userName, RealmConfiguration realmConfig) {
 
+        int tenantId = realmConfig.getTenantId();
+        String tenantDomain = IdentityTenantUtil.getTenantDomain(tenantId);
+        Map<String, Validator> validators = IdentityRecoveryServiceDataHolder.getInstance()
+                .getInputValidationMgtService().getValidators(tenantDomain);
+
+        List<ValidationConfiguration> configurations;
+        try {
+            configurations = IdentityRecoveryServiceDataHolder.getInstance().getInputValidationMgtService()
+                    .getInputValidationConfiguration(tenantDomain);
+            String field = USERNAME;
+            ValidationConfiguration configuration = configurations.stream().filter(config ->
+                    field.equalsIgnoreCase(config.getField())).collect(Collectors.toList()).get(0);
+
+            /* If InputValidation.Username.Enabled configuration is enabled and the configuration for username field is
+            found in Input Validation Mgt service, validate against them, if not validate against the regex from the
+            userStore. */
+            if (Boolean.parseBoolean(IdentityUtil.getProperty(Constants.INPUT_VALIDATION_USERNAME_ENABLED_CONFIG))
+                    && configuration != null) {
+                try {
+                    return validateAgainstConfiguration(configuration, validators, field, userName,
+                            tenantDomain);
+                } catch (InputValidationMgtClientException e) {
+                    return false;
+                }
+            } else {
+                return validateAgainstRegex(userName, realmConfig);
+            }
+        } catch(InputValidationMgtException e){
+            return ERROR_GETTING_EXISTING_CONFIGURATIONS.getCode().equals(e.getErrorCode());
+        }
+    }
+
+    /** This method is to validate username format against the regex from the userstore.
+     *
+     * @param userName      Username that needs to be validated.
+     * @param realmConfig   Realm Configuration.
+     * @return whether username values satisfy the regex.
+     */
+    private boolean validateAgainstRegex(String userName, RealmConfiguration realmConfig) {
+
         if (userName == null || CarbonConstants.REGISTRY_SYSTEM_USERNAME.equals(userName)) {
             return false;
         }
@@ -1410,7 +1554,37 @@ public class UserSelfRegistrationManager {
         }
 
         return StringUtils.isEmpty(regularExpression) || isFormatCorrect(regularExpression, userName);
+    }
 
+    /** This method is to validate username format against the username validation configured with Input Validation.
+     *
+     * @param configuration     Validation configuration for the username field.
+     * @param validators        Validators.
+     * @param field             Field name that need to be validated.
+     * @param value             Value of the field.
+     * @param tenantDomain      Tenant domain.
+     * @return whether username values satisfy the validation configurations.
+     * @throws InputValidationMgtClientException
+     */
+    private boolean validateAgainstConfiguration(ValidationConfiguration configuration, Map<String, Validator>
+            validators, String field, String value, String tenantDomain) throws InputValidationMgtClientException {
+
+        List<RulesConfiguration> rules = new ArrayList<>();
+        if (configuration.getRegEx() != null) {
+            rules = configuration.getRegEx();
+        } else if (configuration.getRules() != null) {
+            rules = configuration.getRules();
+        }
+        for (RulesConfiguration rule: rules) {
+            Validator validator = validators.get(rule.getValidatorName());
+            ValidationContext context = new ValidationContext();
+            context.setField(field);
+            context.setValue(value);
+            context.setTenantDomain(tenantDomain);
+            context.setProperties(rule.getProperties());
+            validator.validate(context);
+        }
+        return true;
     }
 
     /**
@@ -1588,9 +1762,8 @@ public class UserSelfRegistrationManager {
                         .isNotEmpty(preferredChannel)) {
                     claimsMap.put(IdentityRecoveryConstants.PREFERRED_CHANNEL_CLAIM, preferredChannel);
                 }
-                userStoreManager
-                        .addUser(IdentityUtil.addDomainToName(user.getUserName(), user.getUserStoreDomain()), Utils.generateRandomPassword(12),
-                                userRoles, claimsMap, null);
+                userStoreManager.addUser(IdentityUtil.addDomainToName(user.getUserName(), user.getUserStoreDomain()),
+                        new String(Utils.generateRandomPassword(12)), userRoles, claimsMap, null);
             } catch (UserStoreException e) {
                 Throwable cause = e;
                 while (cause != null) {
@@ -1668,7 +1841,8 @@ public class UserSelfRegistrationManager {
             UserRecoveryDataStore userRecoveryDataStore = JDBCRecoveryDataStore.getInstance();
             userRecoveryDataStore.invalidate(user);
 
-            String secretKey = UUIDGenerator.generateUUID();
+            String secretKey = Utils.generateSecretKey(preferredChannel, RecoveryScenarios.LITE_SIGN_UP.name(),
+                    user.getTenantDomain(), "LiteRegistration");
             UserRecoveryData recoveryDataDO = new UserRecoveryData(user, secretKey, RecoveryScenarios.LITE_SIGN_UP,
                     RecoverySteps.CONFIRM_LITE_SIGN_UP);
             recoveryDataDO.setRemainingSetIds(NotificationChannels.EXTERNAL_CHANNEL.getChannelType());
@@ -1850,5 +2024,72 @@ public class UserSelfRegistrationManager {
                     eventName, e);
         }
 
+    }
+
+    /**
+     * This method is used to verify the user attributes coming in the signup request against the requirement of the
+     * registration option specified in the request.
+     *
+     * @param user       User object.
+     * @param password   Password of the user.
+     * @param claims     User claims.
+     * @param properties Properties of the request.
+     * @return ValidationResult object for the provided attributes.
+     * @throws SelfRegistrationException Exception thrown when validating the user attributes.
+     */
+    public Boolean verifyUserAttributes(User user, String password, Claim[] claims, Property[] properties)
+            throws SelfRegistrationException {
+
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(AUTH_ATTRIBUTE_USERNAME, user.getUserName());
+        userAttributes.put(AUTH_ATTRIBUTE_PASSWORD, password);
+
+        if (ArrayUtils.isNotEmpty(claims)) {
+            for (Claim claim : claims) {
+                userAttributes.put(claim.getClaimUri(), claim.getValue());
+            }
+        }
+
+        String registrationOption = extractRegistrationOption(properties);
+        AuthAttributeHandlerManager authAttributeHandlerManager =
+                IdentityRecoveryServiceDataHolder.getInstance().getAuthAttributeHandlerManager();
+
+        ValidationResult validationResult = null;
+        try {
+            validationResult = authAttributeHandlerManager.validateAuthAttributes(registrationOption, userAttributes);
+        } catch (AuthAttributeHandlerException e) {
+            Utils.handleAttributeValidationFailure(e);
+        }
+        if (validationResult == null || !validationResult.isValid()) {
+            Utils.handleAttributeValidationFailure(validationResult);
+        }
+        return validationResult.isValid();
+    }
+
+    private String extractRegistrationOption(Property[] properties) throws SelfRegistrationException {
+
+        /*
+        To preserve the existing behavior, if the registration option is not specified in the request, the default is
+        considered as the Username and Password based registration.
+        This constant is defined at the BasicAuthAuthAttributeHandler class in identity-local-auth-basicauth.
+         */
+        String registrationOption = "BasicAuthAuthAttributeHandler";
+        int optionCount = 0;
+        if (ArrayUtils.isNotEmpty(properties)) {
+            for (Property property : properties) {
+                if (SIGNUP_PROPERTY_REGISTRATION_OPTION.equals(property.getKey())) {
+                    registrationOption = property.getValue();
+                    optionCount++;
+                }
+            }
+        }
+        if (optionCount > 1) {
+            throw new SelfRegistrationClientException(
+                    ERROR_CODE_MULTIPLE_REGISTRATION_OPTIONS.getCode(),
+                    ERROR_CODE_MULTIPLE_REGISTRATION_OPTIONS.getMessage(),
+                    "Registration request contains " + optionCount + " registration options. Only one registration " +
+                            "option is allowed.");
+        }
+        return registrationOption;
     }
 }

@@ -19,29 +19,20 @@ import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.governance.IdentityGovernanceException;
 import org.wso2.carbon.identity.governance.IdentityGovernanceService;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
-import org.wso2.carbon.identity.recovery.bean.ChallengeQuestionResponse;
-import org.wso2.carbon.identity.recovery.bean.ChallengeQuestionsResponse;
 import org.wso2.carbon.identity.recovery.endpoint.Constants;
 import org.wso2.carbon.identity.recovery.endpoint.Exceptions.BadRequestException;
 import org.wso2.carbon.identity.recovery.endpoint.Exceptions.InternalServerErrorException;
 import org.wso2.carbon.identity.recovery.endpoint.dto.ClaimDTO;
 import org.wso2.carbon.identity.recovery.endpoint.dto.ErrorDTO;
-import org.wso2.carbon.identity.recovery.endpoint.dto.InitiateAllQuestionResponseDTO;
-import org.wso2.carbon.identity.recovery.endpoint.dto.InitiateQuestionResponseDTO;
 import org.wso2.carbon.identity.recovery.endpoint.dto.LinkDTO;
 import org.wso2.carbon.identity.recovery.endpoint.dto.PropertyDTO;
-import org.wso2.carbon.identity.recovery.endpoint.dto.QuestionDTO;
 import org.wso2.carbon.identity.recovery.endpoint.dto.ReCaptchaResponseTokenDTO;
-import org.wso2.carbon.identity.recovery.endpoint.dto.SecurityAnswerDTO;
 import org.wso2.carbon.identity.recovery.endpoint.dto.UserClaimDTO;
 import org.wso2.carbon.identity.recovery.endpoint.dto.UserDTO;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
-import org.wso2.carbon.identity.recovery.model.ChallengeQuestion;
 import org.wso2.carbon.identity.recovery.model.Property;
-import org.wso2.carbon.identity.recovery.model.UserChallengeAnswer;
 import org.wso2.carbon.identity.recovery.model.UserClaim;
 import org.wso2.carbon.identity.recovery.password.NotificationPasswordRecoveryManager;
-import org.wso2.carbon.identity.recovery.password.SecurityQuestionPasswordRecoveryManager;
 import org.wso2.carbon.identity.recovery.signup.UserSelfRegistrationManager;
 import org.wso2.carbon.identity.recovery.username.NotificationUsernameRecoveryManager;
 import org.wso2.carbon.user.api.Claim;
@@ -71,11 +62,6 @@ public class RecoveryUtil {
     public static NotificationPasswordRecoveryManager getNotificationBasedPwdRecoveryManager() {
         return (NotificationPasswordRecoveryManager) PrivilegedCarbonContext.getThreadLocalCarbonContext()
                 .getOSGiService(NotificationPasswordRecoveryManager.class, null);
-    }
-
-    public static SecurityQuestionPasswordRecoveryManager getSecurityQuestionBasedPwdRecoveryManager() {
-        return (SecurityQuestionPasswordRecoveryManager) PrivilegedCarbonContext.getThreadLocalCarbonContext()
-                .getOSGiService(SecurityQuestionPasswordRecoveryManager.class, null);
     }
 
     public static NotificationUsernameRecoveryManager getNotificationBasedUsernameRecoveryManager() {
@@ -224,59 +210,6 @@ public class RecoveryUtil {
         return userClaims;
     }
 
-    public static InitiateQuestionResponseDTO getInitiateQuestionResponseDTO
-            (ChallengeQuestionResponse challengeQuestionResponse) {
-        InitiateQuestionResponseDTO initiateQuestionResponseDTO = new InitiateQuestionResponseDTO();
-
-        QuestionDTO questionDTO = new QuestionDTO();
-
-        if (challengeQuestionResponse.getQuestion() != null) {
-            questionDTO.setQuestion(challengeQuestionResponse.getQuestion().getQuestion());
-            questionDTO.setQuestionSetId(challengeQuestionResponse.getQuestion().getQuestionSetId());
-
-            initiateQuestionResponseDTO.setQuestion(questionDTO);
-        }
-
-        initiateQuestionResponseDTO.setKey(challengeQuestionResponse.getCode());
-
-        LinkDTO linkDTO = new LinkDTO();
-
-        if (IdentityRecoveryConstants.RECOVERY_STATUS_COMPLETE.equals(challengeQuestionResponse.getStatus())) {
-            linkDTO.setRel("set-password");
-            linkDTO.setUri("/api/identity/recovery/v0.9");
-        } else {
-            linkDTO.setRel("validate-answer");
-            linkDTO.setUri("/api/identity/recovery/v0.9");
-        }
-
-        initiateQuestionResponseDTO.setLink(linkDTO);
-        return initiateQuestionResponseDTO;
-    }
-
-    public static InitiateAllQuestionResponseDTO getInitiateQuestionResponseDTO
-            (ChallengeQuestionsResponse challengeQuestionsResponse) {
-        InitiateAllQuestionResponseDTO initiateAllQuestionResponseDTO = new InitiateAllQuestionResponseDTO();
-
-        List<QuestionDTO> questionDTOs = new ArrayList<>();
-
-        for (ChallengeQuestion challengeQuestion : challengeQuestionsResponse.getQuestion()) {
-            QuestionDTO questionDTO = new QuestionDTO();
-            questionDTO.setQuestion(challengeQuestion.getQuestion());
-            questionDTO.setQuestionSetId(challengeQuestion.getQuestionSetId());
-            questionDTOs.add(questionDTO);
-
-        }
-
-        initiateAllQuestionResponseDTO.setQuestions(questionDTOs);
-        initiateAllQuestionResponseDTO.setKey(challengeQuestionsResponse.getCode());
-
-        LinkDTO linkDTO = new LinkDTO();
-        linkDTO.setRel("validate-answer");
-        linkDTO.setUri("/api/identity/recovery/v0.9");
-        initiateAllQuestionResponseDTO.setLink(linkDTO);
-        return initiateAllQuestionResponseDTO;
-    }
-
     public static User getUser(UserDTO userDTO) {
         User user = new User();
         user.setTenantDomain(userDTO.getTenantDomain());
@@ -302,21 +235,6 @@ public class RecoveryUtil {
         }
         userDTO.setUsername(user.getUserName());
         return userDTO;
-    }
-
-    public static UserChallengeAnswer[] getUserChallengeAnswers(List<SecurityAnswerDTO> securityAnswerDTOs) {
-
-        UserChallengeAnswer[] userChallengeAnswers = new UserChallengeAnswer[securityAnswerDTOs.size()];
-
-        for (int i = 0; i < securityAnswerDTOs.size(); i++) {
-            ChallengeQuestion challengeQuestion = new ChallengeQuestion(securityAnswerDTOs.get(i).getQuestionSetId(),
-                    null);
-            UserChallengeAnswer userChallengeAnswer = new UserChallengeAnswer(challengeQuestion, securityAnswerDTOs
-                    .get(i).getAnswer());
-            userChallengeAnswers[i] = userChallengeAnswer;
-        }
-
-        return userChallengeAnswers;
     }
 
     public static Property[] getProperties(List<PropertyDTO> propertyDTOs) {
@@ -394,6 +312,8 @@ public class RecoveryUtil {
             recoveryReCaptchaType = IdentityRecoveryConstants.ConnectorConfig.USERNAME_RECOVERY_RECAPTCHA_ENABLE;
         } else if (Constants.PASSWORD_RECOVERY.equals(recoveryType)) {
             recoveryReCaptchaType = IdentityRecoveryConstants.ConnectorConfig.PASSWORD_RECOVERY_RECAPTCHA_ENABLE;
+        } else if (Constants.SELF_REGISTRATION.equals(recoveryType)) {
+            recoveryReCaptchaType = IdentityRecoveryConstants.ConnectorConfig.SELF_REGISTRATION_RE_CAPTCHA;
         }
 
         try {
@@ -450,6 +370,7 @@ public class RecoveryUtil {
     private static Properties validateCaptchaConfigs(Properties properties) {
 
         boolean reCaptchaEnabled = Boolean.valueOf(properties.getProperty(CaptchaConstants.RE_CAPTCHA_ENABLED));
+        String reCaptchaType = properties.getProperty(CaptchaConstants.RE_CAPTCHA_TYPE);
 
         if (reCaptchaEnabled && StringUtils.isBlank(properties.getProperty(CaptchaConstants.RE_CAPTCHA_SITE_KEY))) {
             RecoveryUtil.handleBadRequest(String.format("%s is not found ", CaptchaConstants.RE_CAPTCHA_SITE_KEY),
@@ -466,6 +387,12 @@ public class RecoveryUtil {
         if (StringUtils.isBlank(properties.getProperty(CaptchaConstants.RE_CAPTCHA_VERIFY_URL))) {
             RecoveryUtil.handleBadRequest(String.format("%s is not found ", CaptchaConstants.RE_CAPTCHA_VERIFY_URL),
                     Constants.STATUS_INTERNAL_SERVER_ERROR_MESSAGE_DEFAULT);
+        }
+        // Check if project id is available for reCaptcha Enterprise.
+        if (CaptchaConstants.RE_CAPTCHA_TYPE_ENTERPRISE.equals(reCaptchaType) &&
+                StringUtils.isBlank(properties.getProperty(CaptchaConstants.RE_CAPTCHA_PROJECT_ID))) {
+            RecoveryUtil.handleBadRequest(String.format("%s is not found ", CaptchaConstants
+                    .RE_CAPTCHA_PROJECT_ID), Constants.STATUS_INTERNAL_SERVER_ERROR_MESSAGE_DEFAULT);
         }
         return properties;
     }

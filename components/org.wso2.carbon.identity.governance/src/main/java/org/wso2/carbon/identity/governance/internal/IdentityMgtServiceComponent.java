@@ -32,9 +32,14 @@ import org.wso2.carbon.identity.governance.IdentityGovernanceService;
 import org.wso2.carbon.identity.governance.IdentityGovernanceServiceImpl;
 import org.wso2.carbon.identity.governance.common.IdentityConnectorConfig;
 import org.wso2.carbon.identity.governance.internal.service.impl.notification.DefaultNotificationChannelManager;
+import org.wso2.carbon.identity.governance.internal.service.impl.otp.DefaultOTPGenerator;
+import org.wso2.carbon.identity.governance.internal.service.impl.otp.OTPGeneratorImpl;
+import org.wso2.carbon.identity.governance.service.IdentityDataStoreService;
+import org.wso2.carbon.identity.governance.service.IdentityDataStoreServiceImpl;
 import org.wso2.carbon.identity.governance.service.notification.NotificationChannelManager;
 import org.wso2.carbon.identity.governance.listener.IdentityMgtEventListener;
 import org.wso2.carbon.identity.governance.listener.IdentityStoreEventListener;
+import org.wso2.carbon.identity.governance.service.otp.OTPGenerator;
 import org.wso2.carbon.idp.mgt.IdpManager;
 import org.wso2.carbon.user.core.listener.UserOperationEventListener;
 import org.wso2.carbon.user.core.service.RealmService;
@@ -52,6 +57,11 @@ public class IdentityMgtServiceComponent {
         try {
             IdentityMgtEventListener listener = new IdentityMgtEventListener();
             context.getBundleContext().registerService(UserOperationEventListener.class, listener, null);
+            // IdentityDataStoreService should be registered before the IdentityStoreEventListener.
+            IdentityDataStoreService identityDataStoreService = new IdentityDataStoreServiceImpl();
+            context.getBundleContext()
+                    .registerService(IdentityDataStoreService.class.getName(), identityDataStoreService, null);
+            IdentityMgtServiceDataHolder.getInstance().setIdentityDataStoreService(identityDataStoreService);
             context.getBundleContext().registerService(UserOperationEventListener.class, new
                     IdentityStoreEventListener(), null);
             IdentityGovernanceServiceImpl identityGovernanceService = new IdentityGovernanceServiceImpl();
@@ -62,6 +72,9 @@ public class IdentityMgtServiceComponent {
                     new DefaultNotificationChannelManager();
             context.getBundleContext()
                     .registerService(NotificationChannelManager.class.getName(), defaultNotificationChannelManager, null);
+            OTPGeneratorImpl otpGeneratorImpl = new OTPGeneratorImpl();
+            context.getBundleContext()
+                    .registerService(OTPGenerator.class.getName(), otpGeneratorImpl, null);
 
             if (log.isDebugEnabled()) {
                 log.debug("Identity Management Listener is enabled");

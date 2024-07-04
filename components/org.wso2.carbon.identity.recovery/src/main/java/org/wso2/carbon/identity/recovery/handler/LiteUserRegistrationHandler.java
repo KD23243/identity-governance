@@ -47,7 +47,6 @@ import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
 import org.wso2.carbon.identity.recovery.store.JDBCRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.store.UserRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.util.Utils;
-import org.wso2.carbon.registry.core.utils.UUIDGenerator;
 import org.wso2.carbon.user.core.UserCoreConstants;
 import org.wso2.carbon.user.core.UserStoreException;
 import org.wso2.carbon.user.core.UserStoreManager;
@@ -132,7 +131,8 @@ public class LiteUserRegistrationHandler extends AbstractEventHandler {
                     userRecoveryDataStore.invalidate(user);
 
                     // Create a secret key based on the preferred notification channel.
-                    String secretKey = generateSecretKey(preferredChannel);
+                    String secretKey = Utils.generateSecretKey(preferredChannel, RecoveryScenarios.LITE_SIGN_UP.name(),
+                            tenantDomain, "LiteRegistration");
 
                     // Resolve event name.
                     String eventName = resolveEventName(preferredChannel, userName, domainName, tenantDomain);
@@ -382,9 +382,13 @@ public class LiteUserRegistrationHandler extends AbstractEventHandler {
             properties.put(IdentityRecoveryConstants.CONFIRMATION_CODE, code);
         }
 
-        properties.put(IdentityRecoveryConstants.TEMPLATE_TYPE,
-                IdentityRecoveryConstants.NOTIFICATION_TYPE_LITE_USER_EMAIL_CONFIRM);
-
+        if (properties.containsKey(IdentityRecoveryConstants.EMAIL_TEMPLATE_NAME)) {
+            properties.put(IdentityRecoveryConstants.TEMPLATE_TYPE,
+                    properties.get(IdentityRecoveryConstants.EMAIL_TEMPLATE_NAME));
+        } else {
+            properties.put(IdentityRecoveryConstants.TEMPLATE_TYPE,
+                    IdentityRecoveryConstants.NOTIFICATION_TYPE_LITE_USER_EMAIL_CONFIRM);
+        }
 
         Event identityMgtEvent = new Event(eventName, properties);
         try {
@@ -394,43 +398,4 @@ public class LiteUserRegistrationHandler extends AbstractEventHandler {
                     user.getUserName(), e);
         }
     }
-
-    /**
-     * Generate an OTP for password recovery via mobile Channel
-     *
-     * @return OTP
-     */
-    private String generateSMSOTP() {
-
-        char[] chars = IdentityRecoveryConstants.SMS_OTP_GENERATE_CHAR_SET.toCharArray();
-        SecureRandom rnd = new SecureRandom();
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < IdentityRecoveryConstants.SMS_OTP_CODE_LENGTH; i++) {
-            sb.append(chars[rnd.nextInt(chars.length)]);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Generate a secret key according to the given channel. Method will generate an OTP for mobile channel and a
-     * UUID for other channels.
-     *
-     * @param channel Recovery notification channel.
-     * @return Secret key
-     */
-    private String generateSecretKey(String channel) {
-
-        if (NotificationChannels.SMS_CHANNEL.getChannelType().equals(channel)) {
-            if (log.isDebugEnabled()) {
-                log.debug("OTP was generated for the user for channel : " + channel);
-            }
-            return generateSMSOTP();
-        } else {
-            if (log.isDebugEnabled()) {
-                log.debug("UUID was generated for the user for channel : " + channel);
-            }
-            return UUIDGenerator.generateUUID();
-        }
-    }
-
 }

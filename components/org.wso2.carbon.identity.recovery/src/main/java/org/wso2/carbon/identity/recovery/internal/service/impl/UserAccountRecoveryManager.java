@@ -43,6 +43,7 @@ import org.wso2.carbon.identity.recovery.RecoverySteps;
 import org.wso2.carbon.identity.recovery.dto.NotificationChannelDTO;
 import org.wso2.carbon.identity.recovery.dto.RecoveryChannelInfoDTO;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
+import org.wso2.carbon.identity.recovery.internal.service.impl.username.UsernameRecoveryManagerImpl;
 import org.wso2.carbon.identity.recovery.model.NotificationChannel;
 import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
 import org.wso2.carbon.identity.recovery.model.UserRecoveryFlowData;
@@ -423,10 +424,19 @@ public class UserAccountRecoveryManager {
             Condition operationalCondition = getOperationalCondition(expressionConditionList);
             // Get the user list that matches the condition limit : 2, offset : 1, sortBy : null, sortOrder : null
             userList.addAll(abstractUserStoreManager.getUserListWithID(operationalCondition, userstoreDomain,
-                    UserCoreConstants.DEFAULT_PROFILE, 2, 1, null, null));
+                    UserCoreConstants.DEFAULT_PROFILE, 200, 1, null, null));
 
             if (userList.size() > 1) {
-                log.warn("Multiple users matched for given claims set: " + claims.keySet());
+                UsernameRecoveryManagerImpl usernameRecoveryManager = new UsernameRecoveryManagerImpl();
+                for (org.wso2.carbon.user.core.common.User user : userList) {
+                    User recoveryUser = Utils.buildUser(user.getDomainQualifiedUsername(), user.getTenantDomain());
+                    try {
+                        usernameRecoveryManager.triggerNotification(recoveryUser, NotificationChannels.EMAIL_CHANNEL.getChannelType(),
+                                IdentityEventConstants.Event.TRIGGER_NOTIFICATION, null);
+                    }catch (IdentityRecoveryException e) {
+                        log.warn("Error while triggering notification for the user: " + user.getDomainQualifiedUsername(), e);
+                    }
+                }
                 throw Utils.handleClientException(
                         IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_MULTIPLE_MATCHING_USERS, null);
             }
@@ -451,7 +461,7 @@ public class UserAccountRecoveryManager {
             String attributeName = claimManager.getAttributeName(domain, entry.getKey());
             if (StringUtils.isNotEmpty(entry.getKey()) && StringUtils.isNotEmpty(entry.getValue()) &&
                     StringUtils.isNotEmpty(attributeName)) {
-                expressionConditionList.add(new ExpressionCondition(ExpressionOperation.EQ.toString(), attributeName,
+                expressionConditionList.add(new ExpressionCondition(ExpressionOperation.SW.toString(), attributeName,
                         entry.getValue()));
             }
         }

@@ -461,7 +461,7 @@ public class UserAccountRecoveryManager {
             String attributeName = claimManager.getAttributeName(domain, entry.getKey());
             if (StringUtils.isNotEmpty(entry.getKey()) && StringUtils.isNotEmpty(entry.getValue()) &&
                     StringUtils.isNotEmpty(attributeName)) {
-                expressionConditionList.add(new ExpressionCondition(ExpressionOperation.SW.toString(), attributeName,
+                expressionConditionList.add(new ExpressionCondition(ExpressionOperation.EQ.toString(), attributeName,
                         entry.getValue()));
             }
         }

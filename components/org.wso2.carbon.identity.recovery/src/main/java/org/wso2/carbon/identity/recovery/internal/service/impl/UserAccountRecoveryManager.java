@@ -424,7 +424,7 @@ public class UserAccountRecoveryManager {
             Condition operationalCondition = getOperationalCondition(expressionConditionList);
             // Get the user list that matches the condition limit : 2, offset : 1, sortBy : null, sortOrder : null
             userList.addAll(abstractUserStoreManager.getUserListWithID(operationalCondition, userstoreDomain,
-                    UserCoreConstants.DEFAULT_PROFILE, 200, 1, null, null));
+                    UserCoreConstants.DEFAULT_PROFILE,  Integer.MAX_VALUE, 1, null, null));
 
             if (userList.size() > 1) {
                 UsernameRecoveryManagerImpl usernameRecoveryManager = new UsernameRecoveryManagerImpl();

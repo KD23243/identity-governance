@@ -423,10 +423,25 @@ public class UserAccountRecoveryManager {
             Condition operationalCondition = getOperationalCondition(expressionConditionList);
             // Get the user list that matches the condition limit : 2, offset : 1, sortBy : null, sortOrder : null
             userList.addAll(abstractUserStoreManager.getUserListWithID(operationalCondition, userstoreDomain,
-                    UserCoreConstants.DEFAULT_PROFILE, 2, 1, null, null));
+                    UserCoreConstants.DEFAULT_PROFILE, Integer.MAX_VALUE, 1, null, null));
 
             if (userList.size() > 1) {
-                log.warn("Multiple users matched for given claims set: " + claims.keySet());
+                for (org.wso2.carbon.user.core.common.User user : userList) {
+                    User recoveryUser = Utils.buildUser(user.getDomainQualifiedUsername(), user.getTenantDomain());
+                    HashMap<String, Object> properties = new HashMap<>();
+                    properties.put(IdentityEventConstants.EventProperty.USER_NAME, recoveryUser.getUserName());
+                    properties.put(IdentityEventConstants.EventProperty.TENANT_DOMAIN, recoveryUser.getTenantDomain());
+                    properties.put(IdentityEventConstants.EventProperty.USER_STORE_DOMAIN, recoveryUser.getUserStoreDomain());
+                    properties.put(IdentityEventConstants.EventProperty.NOTIFICATION_CHANNEL, NotificationChannels.EMAIL_CHANNEL.getChannelType());
+                    properties.put(IdentityRecoveryConstants.TEMPLATE_TYPE, IdentityRecoveryConstants.NOTIFICATION_ACCOUNT_ID_RECOVERY);
+
+                    Event identityMgtEvent = new Event(IdentityEventConstants.Event.TRIGGER_NOTIFICATION, properties);
+                    try {
+                        IdentityRecoveryServiceDataHolder.getInstance().getIdentityEventService().handleEvent(identityMgtEvent);
+                    } catch (IdentityEventException e) {
+                        log.warn("Error while triggering notification for the user: ", e);
+                    }
+                }
                 throw Utils.handleClientException(
                         IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_MULTIPLE_MATCHING_USERS, null);
             }

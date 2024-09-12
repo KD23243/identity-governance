@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, WSO2 LLC. (https://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2020, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package org.wso2.carbon.identity.recovery.internal.service.impl;
 
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
 import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
@@ -32,22 +33,31 @@ import org.wso2.carbon.identity.base.IdentityException;
 import org.wso2.carbon.identity.claim.metadata.mgt.ClaimMetadataManagementService;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
+import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
 import org.wso2.carbon.identity.event.services.IdentityEventService;
 import org.wso2.carbon.identity.governance.service.notification.NotificationChannels;
+import org.wso2.carbon.identity.multi.attribute.login.constants.MultiAttributeLoginConstants;
 import org.wso2.carbon.identity.multi.attribute.login.mgt.MultiAttributeLoginService;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryClientException;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryException;
+import org.wso2.carbon.identity.recovery.IdentityRecoveryServerException;
 import org.wso2.carbon.identity.recovery.RecoveryScenarios;
+import org.wso2.carbon.identity.recovery.RecoverySteps;
 import org.wso2.carbon.identity.recovery.dto.NotificationChannelDTO;
 import org.wso2.carbon.identity.recovery.dto.RecoveryChannelInfoDTO;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
+import org.wso2.carbon.identity.recovery.model.NotificationChannel;
 import org.wso2.carbon.identity.recovery.model.UserRecoveryData;
+import org.wso2.carbon.identity.recovery.model.UserRecoveryFlowData;
 import org.wso2.carbon.identity.recovery.store.JDBCRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.store.UserRecoveryDataStore;
 import org.wso2.carbon.identity.recovery.util.Utils;
+import org.wso2.carbon.identity.user.functionality.mgt.model.FunctionalityLockStatus;
 import org.wso2.carbon.user.api.UserRealm;
+import org.wso2.carbon.user.core.UserStoreException;
+import org.wso2.carbon.user.core.UserStoreManager;
 import org.wso2.carbon.user.core.claim.ClaimManager;
 import org.wso2.carbon.user.core.common.AbstractUserStoreManager;
 import org.wso2.carbon.user.core.model.Condition;
@@ -55,23 +65,35 @@ import org.wso2.carbon.user.core.service.RealmService;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.MockitoAnnotations.openMocks;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
+import static org.testng.internal.junit.ArrayAsserts.assertArrayEquals;
 
 /**
  * Class which contains the test cases for UserAccountRecoveryManager.
@@ -108,6 +130,9 @@ public class UserAccountRecoveryManagerTest {
     @Mock
     MultiAttributeLoginService multiAttributeLoginService;
 
+    @Mock
+    UserRecoveryDataStore mockUserRecoveryDataStore;
+
     /**
      * User claims map.
      */
@@ -121,11 +146,11 @@ public class UserAccountRecoveryManagerTest {
     @BeforeMethod
     public void setUp() {
 
-        mockedJDBCRecoveryDataStore = Mockito.mockStatic(JDBCRecoveryDataStore.class);
-        mockedIdentityUtil = Mockito.mockStatic(IdentityUtil.class);
-        mockedUtils = Mockito.mockStatic(Utils.class);
-        mockedIdentityTenantUtil = Mockito.mockStatic(IdentityTenantUtil.class);
-        mockedIdentityRecoveryServiceDataHolder = Mockito.mockStatic(IdentityRecoveryServiceDataHolder.class);
+        mockedJDBCRecoveryDataStore = mockStatic(JDBCRecoveryDataStore.class);
+        mockedIdentityUtil = mockStatic(IdentityUtil.class);
+        mockedUtils = mockStatic(Utils.class);
+        mockedIdentityTenantUtil = mockStatic(IdentityTenantUtil.class);
+        mockedIdentityRecoveryServiceDataHolder = mockStatic(IdentityRecoveryServiceDataHolder.class);
     }
 
     @AfterMethod
@@ -141,7 +166,7 @@ public class UserAccountRecoveryManagerTest {
     @BeforeTest
     private void setup() {
 
-        MockitoAnnotations.openMocks(this);
+        openMocks(this);
         userAccountRecoveryManager = UserAccountRecoveryManager.getInstance();
         userClaims = buildUserClaimsMap();
     }
@@ -160,6 +185,386 @@ public class UserAccountRecoveryManagerTest {
         testGetUserWithNotificationsExternallyManaged();
         // Test notifications internally managed.
         testGetUserWithNotificationsInternallyManaged();
+    }
+
+//    @Test
+    public void test1() throws Exception {
+        mockUserstoreManager();
+        mockedIdentityUtil.when(() -> IdentityUtil.extractDomainFromName(anyString())).thenReturn("PRIMARY");//        mockBuildUser();
+
+        User user = new User();
+        user.setUserName(UserProfile.USERNAME.value);
+        user.setUserStoreDomain("PRIMARY");
+        user.setTenantDomain("carbon.super");
+        when(Utils.buildUser(anyString(), anyString())).thenReturn(user);
+
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(false);
+        when(abstractUserStoreManager.getUserListWithID(any(Condition.class), anyString(), anyString(),
+                anyInt(), anyInt(), isNull(), isNull())).thenReturn(getOneFilteredUser());
+        when(claimManager.getAttributeName(anyString(), anyString()))
+                .thenReturn("http://wso2.org/claims/mockedClaim");
+
+        when(Utils.isAccountDisabled(any(User.class))).thenReturn(false);
+        when(Utils.isAccountLocked(any(User.class))).thenReturn(false);
+        when(Utils.getAccountState(any(User.class))).thenReturn(null);
+
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.retrieveUserRecoveryInformation(userClaims, StringUtils.EMPTY,
+                    RecoveryScenarios.USERNAME_RECOVERY, null);
+        });
+    }
+
+    @Test
+    public void testRetrieveUserRecoveryThrowsForLockedAccount() throws Exception {
+        mockUserstoreManager();
+        mockBuildUser();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(false);
+        when(abstractUserStoreManager.getUserListWithID(any(Condition.class), anyString(), anyString(),
+                anyInt(), anyInt(), isNull(), isNull())).thenReturn(getOneFilteredUser());
+        when(claimManager.getAttributeName(anyString(), anyString()))
+                .thenReturn("http://wso2.org/claims/mockedClaim");
+
+        when(Utils.isAccountDisabled(any(User.class))).thenReturn(false);
+        when(Utils.isAccountLocked(any(User.class))).thenReturn(true);
+        when(Utils.getAccountState(any(User.class))).thenReturn(null);
+
+        String errorCode = Utils.prependOperationScenarioToErrorCode(
+                IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_LOCKED_ACCOUNT.getCode(),
+                IdentityRecoveryConstants.USER_ACCOUNT_RECOVERY);
+
+        when(Utils.handleClientException(errorCode,
+                        IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_LOCKED_ACCOUNT.getMessage(), "sominda1"))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.retrieveUserRecoveryInformation(userClaims, StringUtils.EMPTY,
+                    RecoveryScenarios.USERNAME_RECOVERY, null);
+        });
+    }
+
+    @Test
+    public void testThrowInvalidRecoveryFlowIdExceptionWhenInvalidFlowIdIsProvided() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        UserRecoveryData recoveryData = new UserRecoveryData(null, null, null, null);
+        when(mockUserRecoveryDataStore
+                .loadRecoveryFlowData(recoveryData))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_FLOW_ID.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.loadUserRecoveryFlowData(recoveryData);
+        });
+    }
+
+    @Test
+    public void testThrowExpiredRecoveryFlowIdExceptionWhenExpiredFlowIdIsProvided() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        UserRecoveryData recoveryData = new UserRecoveryData(null, null, null, null);
+        when(mockUserRecoveryDataStore
+                .loadRecoveryFlowData(recoveryData))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_EXPIRED_FLOW_ID.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.loadUserRecoveryFlowData(recoveryData);
+        });
+    }
+
+    @Test
+    public void testThrowIdentityRecoveryExceptionForInvalidCode() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        UserRecoveryData recoveryData = new UserRecoveryData(null, null, null, null);
+        when(mockUserRecoveryDataStore
+                .loadRecoveryFlowData(recoveryData))
+                .thenThrow(new IdentityRecoveryException
+                        ("Invalid code", "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.loadUserRecoveryFlowData(recoveryData);
+        });
+    }
+
+    @Test
+    public void testThrowNoRecoveryFlowDataExceptionWhenNoDataIsFound() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        UserRecoveryData recoveryData = new UserRecoveryData(null, null, null, null);
+        recoveryData.setRecoveryFlowId("testFlowId");
+        when(Utils.handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_RECOVERY_FLOW_DATA,
+                "testFlowId"))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.loadUserRecoveryFlowData(recoveryData);
+        });
+    }
+
+    @Test
+    public void testGetUsernameByClaimsThrowsExceptionOnUserStoreError() throws Exception {
+        mockUserstoreManager();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(true);
+        when(realmService.getTenantUserRealm(anyInt()).getClaimManager()).thenThrow(new UserStoreException());
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUsernameByClaims(userClaims, MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
+        });
+        openMocks(this);
+    }
+
+    @Test
+    public void testInvalidCodeThrowsIdentityRecoveryException() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        when(mockUserRecoveryDataStore
+                .load(anyString()))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_CODE.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryData("testFlowId", RecoverySteps.SEND_RECOVERY_INFORMATION);
+        });
+    }
+
+    @Test
+    public void testExpiredCodeThrowsIdentityRecoveryException() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        when(mockUserRecoveryDataStore
+                .load(anyString()))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_EXPIRED_CODE.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryData("testFlowId", RecoverySteps.SEND_RECOVERY_INFORMATION);
+        });
+    }
+
+    @Test
+    public void testInvalidCodeMessageThrowsIdentityRecoveryException() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        when(mockUserRecoveryDataStore
+                .load(anyString()))
+                .thenThrow(new IdentityRecoveryException
+                        ("Invalid Code", "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryData("testFlowId", RecoverySteps.SEND_RECOVERY_INFORMATION);
+        });
+    }
+
+    @Test
+    public void testNoAccountRecoveryDataThrowsIdentityRecoveryException() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        when(Utils.handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_ACCOUNT_RECOVERY_DATA,
+                "UAR-10008"))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryData("UAR-10008", RecoverySteps.SEND_RECOVERY_INFORMATION);
+        });
+    }
+
+    @Test
+    public void testInvalidRecoveryStepThrowsIdentityRecoveryException() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        UserRecoveryData recoveryData = new UserRecoveryData(null, null, null);
+        recoveryData.setRecoveryFlowId("testFlowId");
+        when(mockUserRecoveryDataStore.load(anyString())).thenReturn(recoveryData);
+        when(Utils.handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_RECOVERY_CODE,
+                "UAR-10001"))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryData("UAR-10001", RecoverySteps.SEND_RECOVERY_INFORMATION);
+        });
+    }
+
+    @Test
+    public void testUpdateRecoveryData() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        userAccountRecoveryManager = UserAccountRecoveryManager.getInstance();
+        String recoveryFlowId = "testRecoveryFlowId";
+        testUpdateRecoveryDataFailedAttempts(recoveryFlowId);
+        testUpdateRecoveryDataResendCount(recoveryFlowId);
+        testInvalidateRecoveryData(recoveryFlowId);
+    }
+
+    public void testUpdateRecoveryDataFailedAttempts(String recoveryFlowId) throws IdentityRecoveryException {
+        int failedAttempts = 3;
+        userAccountRecoveryManager.updateRecoveryDataFailedAttempts(recoveryFlowId, failedAttempts);
+        verify(mockUserRecoveryDataStore, times(1)).updateFailedAttempts(recoveryFlowId, failedAttempts);
+    }
+
+    public void testUpdateRecoveryDataResendCount(String recoveryFlowId) throws IdentityRecoveryException {
+        int resendCount = 2;
+        userAccountRecoveryManager.updateRecoveryDataResendCount(recoveryFlowId, resendCount);
+        verify(mockUserRecoveryDataStore, times(1)).updateCodeResendCount(recoveryFlowId, resendCount);
+    }
+
+    public void testInvalidateRecoveryData(String recoveryFlowId) throws IdentityRecoveryException {
+        userAccountRecoveryManager.invalidateRecoveryData(recoveryFlowId);
+        verify(mockUserRecoveryDataStore, times(1)).invalidateWithRecoveryFlowId(recoveryFlowId);
+    }
+
+    @Test
+    public void testRetrieveUserRecoveryInformationThrowsExceptionWhenAccountIsLocked() throws Exception {
+
+        mockUserstoreManager();
+        mockBuildUser();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(false);
+        when(abstractUserStoreManager.getUserListWithID(any(Condition.class), anyString(), anyString(),
+                anyInt(), anyInt(), isNull(), isNull())).thenReturn(getOneFilteredUser());
+        when(claimManager.getAttributeName(anyString(), anyString()))
+                .thenReturn("http://wso2.org/claims/mockedClaim");
+
+        when(Utils.isAccountDisabled(any(User.class))).thenReturn(false);
+        when(Utils.isAccountLocked(any(User.class))).thenReturn(true);
+        when(Utils.getAccountState(any(User.class))).thenReturn(IdentityRecoveryConstants.PENDING_SELF_REGISTRATION);
+        when(Utils.prependOperationScenarioToErrorCode(anyString(), anyString())).thenReturn("UAR-6100");
+        when(Utils.handleClientException(anyString(), anyString(), anyString()))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.retrieveUserRecoveryInformation(userClaims, StringUtils.EMPTY,
+                    RecoveryScenarios.USERNAME_RECOVERY, null);
+        });
+    }
+
+    @Test
+    public void testAccountDisabled() throws Exception {
+
+        mockUserstoreManager();
+        mockBuildUser();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(false);
+        when(abstractUserStoreManager.getUserListWithID(any(Condition.class), anyString(), anyString(),
+                anyInt(), anyInt(), isNull(), isNull())).thenReturn(getOneFilteredUser());
+        when(claimManager.getAttributeName(anyString(), anyString()))
+                .thenReturn("http://wso2.org/claims/mockedClaim");
+
+        when(Utils.isAccountDisabled(any(User.class))).thenReturn(false);
+        when(Utils.isAccountLocked(any(User.class))).thenReturn(true);
+        when(Utils.getAccountState(any(User.class))).thenReturn(IdentityRecoveryConstants.PENDING_ASK_PASSWORD);
+        when(Utils.prependOperationScenarioToErrorCode(anyString(), anyString())).thenReturn("UAR-17006");
+        when(Utils.handleClientException(anyString(), anyString(), anyString()))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.retrieveUserRecoveryInformation(userClaims, StringUtils.EMPTY,
+                    RecoveryScenarios.USERNAME_RECOVERY, null);
+        });
+    }
+
+    @Test
+    public void testCheckAccountLockedStatus() throws Exception {
+
+        mockUserstoreManager();
+        mockBuildUser();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(false);
+        when(abstractUserStoreManager.getUserListWithID(any(Condition.class), anyString(), anyString(),
+                anyInt(), anyInt(), isNull(), isNull())).thenReturn(getOneFilteredUser());
+        when(claimManager.getAttributeName(anyString(), anyString()))
+                .thenReturn("http://wso2.org/claims/mockedClaim");
+
+        when(Utils.isAccountDisabled(any(User.class))).thenReturn(true);
+        when(Utils.prependOperationScenarioToErrorCode(anyString(), anyString())).thenReturn("UAR-17006");
+        when(Utils.handleClientException(anyString(), anyString(), anyString()))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.retrieveUserRecoveryInformation(userClaims, StringUtils.EMPTY,
+                    RecoveryScenarios.USERNAME_RECOVERY, null);
+        });
+    }
+
+    @Test
+    public void testGetUsernameByClaimsReturnsEmptyWhenMultiAttributeLoginIsEnabled() throws Exception {
+        mockUserstoreManager();
+        mockBuildUser();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(true);
+
+        HashMap<String, String> userClaims = new HashMap<>();
+        userClaims.put(MultiAttributeLoginConstants.MULTI_ATTRIBUTE_USER_IDENTIFIER_CLAIM_URI, "testURI");
+        String Username = userAccountRecoveryManager.getUsernameByClaims(userClaims, MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
+        assertEquals(StringUtils.EMPTY, Username);
+    }
+
+    @Test
+    public void testUsernameByClaimsThrowsException() throws Exception {
+        mockUserstoreManager();
+        mockBuildUser();
+        when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService())
+                .thenReturn(multiAttributeLoginService);
+        when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(true);
+        userClaims.put(MultiAttributeLoginConstants.MULTI_ATTRIBUTE_USER_IDENTIFIER_CLAIM_URI, "testURI");
+
+        when(Utils.prependOperationScenarioToErrorCode(anyString(), anyString())).thenReturn("UAR-20066");
+        when(Utils.handleClientException(anyString(), anyString(), isNull()))
+                .thenReturn(new IdentityRecoveryClientException(null, null, null));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUsernameByClaims(userClaims, MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
+        });
+    }
+
+    public void testGetUserRecoveryDataFromFlowIdThrow() throws Exception {
+        mockUserRecoveryDataStore = mock(UserRecoveryDataStore.class);
+        mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(mockUserRecoveryDataStore);
+        userAccountRecoveryManager = UserAccountRecoveryManager.getInstance();
+        when(Utils.prependOperationScenarioToErrorCode(anyString(), anyString())).thenReturn("UAR-sdf");
+    }
+
+
+    @Test
+    public void testRecoveryDataFromFlowIdThrowsException() throws Exception {
+        testGetUserRecoveryDataFromFlowIdThrow();
+        when(mockUserRecoveryDataStore.loadFromRecoveryFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_INVALID_FLOW_ID.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryDataFromFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD);
+        });
+    }
+
+    @Test
+    public void testRecoveryDataFromFlowIdThrowsExpiredFlowIdException() throws Exception {
+        testGetUserRecoveryDataFromFlowIdThrow();
+        when(mockUserRecoveryDataStore.loadFromRecoveryFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_EXPIRED_FLOW_ID.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryDataFromFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD);
+        });
+    }
+
+    @Test
+    public void testRecoveryDataFromFlowIdThrowsExpiredCodeException() throws Exception {
+        testGetUserRecoveryDataFromFlowIdThrow();
+        when(mockUserRecoveryDataStore.loadFromRecoveryFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD))
+                .thenThrow(new IdentityRecoveryException
+                        (IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_EXPIRED_CODE.getCode(), "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryDataFromFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD);
+        });
+    }
+
+    @Test
+    public void testRecoveryDataFromFlowIdThrowsInvalidIDException() throws Exception {
+        testGetUserRecoveryDataFromFlowIdThrow();
+        when(mockUserRecoveryDataStore.loadFromRecoveryFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD))
+                .thenThrow(new IdentityRecoveryException
+                        ("InvalidID", "testMessage"));
+        assertThrows(IdentityRecoveryException.class, () -> {
+            userAccountRecoveryManager.getUserRecoveryDataFromFlowId("testFlowId", RecoverySteps.UPDATE_PASSWORD);
+        });
     }
 
     /**
@@ -193,7 +598,7 @@ public class UserAccountRecoveryManagerTest {
         userClaims.remove(UserProfile.EMAIL_VERIFIED.key);
         userClaims.remove(UserProfile.PHONE_VERIFIED.key);
         when(abstractUserStoreManager
-                .getUserClaimValues(anyString(), ArgumentMatchers.any(String[].class), anyString()))
+                .getUserClaimValues(anyString(), any(String[].class), anyString()))
                 .thenReturn(userClaims);
         when(abstractUserStoreManager.getUserListWithID(any(Condition.class),anyString(),anyString(),
                 anyInt(),anyInt(),isNull(), isNull())).thenReturn(getOneFilteredUser());
@@ -221,7 +626,7 @@ public class UserAccountRecoveryManagerTest {
         when(abstractUserStoreManager.getUserListWithID(any(Condition.class),anyString(),anyString(),
                 anyInt(),anyInt(),isNull(), isNull())).thenReturn(getOneFilteredUser());
         when(abstractUserStoreManager
-                .getUserClaimValues(anyString(), ArgumentMatchers.any(String[].class), isNull()))
+                .getUserClaimValues(anyString(), any(String[].class), isNull()))
                 .thenReturn(userClaims);
         RecoveryChannelInfoDTO recoveryChannelInfoDTO = userAccountRecoveryManager
                 .retrieveUserRecoveryInformation(userClaims, StringUtils.EMPTY, RecoveryScenarios.USERNAME_RECOVERY,
@@ -294,8 +699,8 @@ public class UserAccountRecoveryManagerTest {
             mockUserstoreManager();
             mockClaimMetadataManagementService();
             mockedUtils.when(
-                    () -> Utils.handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_USER_FOUND,
-                            null))
+                            () -> Utils.handleClientException(IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_USER_FOUND,
+                                    null))
                     .thenReturn(IdentityException.error(IdentityRecoveryClientException.class,
                             IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_USER_FOUND.getCode(), ""));
             when(abstractUserStoreManager.getUserListWithID(any(Condition.class),anyString(),anyString(),
@@ -321,8 +726,8 @@ public class UserAccountRecoveryManagerTest {
     private void mockJDBCRecoveryDataStore() throws IdentityRecoveryException {
 
         mockedJDBCRecoveryDataStore.when(JDBCRecoveryDataStore::getInstance).thenReturn(userRecoveryDataStore);
-        doNothing().when(userRecoveryDataStore).invalidate(ArgumentMatchers.any(User.class));
-        doNothing().when(userRecoveryDataStore).store(ArgumentMatchers.any(UserRecoveryData.class));
+        doNothing().when(userRecoveryDataStore).invalidate(any(User.class));
+        doNothing().when(userRecoveryDataStore).store(any(UserRecoveryData.class));
     }
 
     /**
@@ -335,8 +740,8 @@ public class UserAccountRecoveryManagerTest {
 
         mockedIdentityUtil.when(() -> IdentityUtil.extractDomainFromName(anyString())).thenReturn("PRIMARY");
         mockedIdentityUtil.when(IdentityUtil::getPrimaryDomainName).thenReturn("PRIMARY");
-        mockedUtils.when(() -> Utils.isAccountDisabled(ArgumentMatchers.any(User.class))).thenReturn(false);
-        mockedUtils.when(() -> Utils.isAccountLocked(ArgumentMatchers.any(User.class))).thenReturn(false);
+        mockedUtils.when(() -> Utils.isAccountDisabled(any(User.class))).thenReturn(false);
+        mockedUtils.when(() -> Utils.isAccountLocked(any(User.class))).thenReturn(false);
         mockedUtils.when(() -> Utils.isNotificationsInternallyManaged(anyString(), isNull()))
                 .thenReturn(isNotificationInternallyManaged);
     }
@@ -385,7 +790,7 @@ public class UserAccountRecoveryManagerTest {
         mockUserstoreManager();
         when(abstractUserStoreManager.getUserListWithID(any(Condition.class),anyString(),anyString(),
                 anyInt(),anyInt(),isNull(), isNull())).thenReturn(
-                        new ArrayList<org.wso2.carbon.user.core.common.User>());
+                new ArrayList<org.wso2.carbon.user.core.common.User>());
         String username = userAccountRecoveryManager
                 .getUsernameByClaims(userClaims, MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
         assertTrue(username.isEmpty(), "No matching users for given set of claims : ");
@@ -399,8 +804,8 @@ public class UserAccountRecoveryManagerTest {
         // Test no claims provided scenario.
         try {
             mockedUtils.when(() -> Utils.prependOperationScenarioToErrorCode(
-                    IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_FIELD_FOUND_FOR_USER_RECOVERY.getCode(),
-                    IdentityRecoveryConstants.USER_ACCOUNT_RECOVERY))
+                            IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_FIELD_FOUND_FOR_USER_RECOVERY.getCode(),
+                            IdentityRecoveryConstants.USER_ACCOUNT_RECOVERY))
                     .thenReturn(
                             IdentityRecoveryConstants.ErrorMessages.ERROR_CODE_NO_FIELD_FOUND_FOR_USER_RECOVERY.
                                     getCode());
@@ -436,17 +841,17 @@ public class UserAccountRecoveryManagerTest {
         when(testUser.getTenantDomain()).thenReturn(MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
         List<org.wso2.carbon.user.core.common.User> users = Arrays.asList(testUser, testUser, testUser);
 
-        User recoveryUser = mock(User.class);
-        when(Utils.buildUser(anyString(), anyString())).thenReturn(recoveryUser);
-        when(recoveryUser.getUserName()).thenReturn("KD123");
-        when(recoveryUser.getTenantDomain()).thenReturn(MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
-        when(recoveryUser.getUserStoreDomain()).thenReturn("PRIMARY");
-
         when(abstractUserStoreManager.getUserListWithID(any(Condition.class), anyString(), anyString(),
                 anyInt(), anyInt(), isNull(), isNull())).thenReturn(users);
         when(claimManager.getAttributeName(anyString(), anyString())).thenReturn("http://wso2.org/claims/mockedClaim");
         when(identityRecoveryServiceDataHolder.getMultiAttributeLoginService()).thenReturn(multiAttributeLoginService);
         when(multiAttributeLoginService.isEnabled(anyString())).thenReturn(false);
+
+        User recoveryUser = mock(User.class);
+        when(Utils.buildUser(anyString(), anyString())).thenReturn(recoveryUser);
+        when(recoveryUser.getUserName()).thenReturn("KD123");
+        when(recoveryUser.getTenantDomain()).thenReturn(MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
+        when(recoveryUser.getUserStoreDomain()).thenReturn("PRIMARY");
 
         IdentityEventService identityEventService = mock(IdentityEventService.class);
         when(IdentityRecoveryServiceDataHolder.getInstance().getIdentityEventService()).thenReturn(identityEventService);
@@ -470,7 +875,7 @@ public class UserAccountRecoveryManagerTest {
         mockedIdentityRecoveryServiceDataHolder.when(IdentityRecoveryServiceDataHolder::getInstance).thenReturn(
                 identityRecoveryServiceDataHolder);
         when(identityRecoveryServiceDataHolder.getRealmService()).thenReturn(realmService);
-        when(realmService.getTenantUserRealm(ArgumentMatchers.anyInt())).thenReturn(userRealm);
+        when(realmService.getTenantUserRealm(anyInt())).thenReturn(userRealm);
         when(userRealm.getClaimManager()).thenReturn(claimManager);
         when(userRealm.getUserStoreManager()).thenReturn(abstractUserStoreManager);
     }

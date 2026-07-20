@@ -28,19 +28,26 @@ import org.wso2.carbon.identity.application.common.model.User;
 import org.wso2.carbon.identity.application.mgt.ApplicationManagementService;
 import org.wso2.carbon.identity.application.mgt.ApplicationMgtUtil;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
+import org.wso2.carbon.identity.core.context.IdentityContext;
+import org.wso2.carbon.identity.core.context.model.Flow;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.core.util.LambdaExceptionUtils;
+import org.wso2.carbon.identity.event.IdentityEventConstants;
+import org.wso2.carbon.identity.event.IdentityEventException;
+import org.wso2.carbon.identity.event.event.Event;
 import org.wso2.carbon.identity.flow.execution.engine.Constants;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineClientException;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineException;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineServerException;
+import org.wso2.carbon.identity.flow.execution.engine.graph.AuthenticationExecutor;
 import org.wso2.carbon.identity.flow.execution.engine.graph.Executor;
 import org.wso2.carbon.identity.flow.execution.engine.model.ExecutorResponse;
 import org.wso2.carbon.identity.flow.execution.engine.model.FlowExecutionContext;
 import org.wso2.carbon.identity.flow.execution.engine.model.FlowUser;
 import org.wso2.carbon.identity.flow.execution.engine.util.FlowExecutionEngineUtils;
 import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
+import org.wso2.carbon.identity.recovery.IdentityRecoveryException;
 import org.wso2.carbon.identity.recovery.executor.ExecutorConstants.ExecutorErrorMessages;
 import org.wso2.carbon.identity.recovery.internal.IdentityRecoveryServiceDataHolder;
 import org.wso2.carbon.identity.recovery.model.Property;
@@ -76,7 +83,11 @@ import static org.wso2.carbon.identity.application.mgt.ApplicationConstants.MY_A
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.PASSWORD_KEY;
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.STATUS_COMPLETE;
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.USERNAME_CLAIM_URI;
+import static org.wso2.carbon.identity.flow.mgt.Constants.FlowTypes.INVITED_USER_REGISTRATION;
+import static org.wso2.carbon.identity.flow.mgt.Constants.FlowTypes.PASSWORD_RECOVERY;
 import static org.wso2.carbon.identity.flow.mgt.Constants.FlowTypes.REGISTRATION;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.CONFIRMATION_CODE;
+import static org.wso2.carbon.identity.recovery.IdentityRecoveryConstants.CONFIRMATION_CODE_INPUT;
 import static org.wso2.carbon.identity.recovery.executor.ExecutorConstants.DISPLAY_CLAIM_AVAILABILITY_CONFIG;
 import static org.wso2.carbon.identity.recovery.executor.ExecutorConstants.DUPLICATE_CLAIMS_ERROR_CODE;
 import static org.wso2.carbon.identity.recovery.executor.ExecutorConstants.DUPLICATE_CLAIM_ERROR_CODE;
@@ -144,6 +155,10 @@ public class UserProvisioningExecutor implements Executor {
             UserStoreManager userStoreManager = getUserStoreManager(context.getTenantDomain(), userStoreDomainName,
                     context.getContextIdentifier(), context.getFlowType());
             String domainQualifiedName = IdentityUtil.addDomainToName(user.getUsername(), userStoreDomainName);
+
+            // Set the password for the credential flows.
+            updateCredential(context, userStoreManager, domainQualifiedName);
+
             if (!userClaims.isEmpty()) {
                 userStoreManager.setUserClaimValues(domainQualifiedName, userClaims, null);
             }
@@ -152,7 +167,11 @@ public class UserProvisioningExecutor implements Executor {
 
             response.setResult(STATUS_COMPLETE);
             return response;
-        } catch (UserStoreException e) {
+        } catch (UserStoreException | IdentityEventException | IdentityRecoveryException e) {
+            ExecutorResponse actionFailureResponse = buildClientErrorResponseForActionFailure(response, e);
+            if (actionFailureResponse.getResult() != null) {
+                return actionFailureResponse;
+            }
             if (e instanceof UserStoreClientException) {
                 UserStoreClientException exception = (UserStoreClientException) e;
                 boolean displayClaimAvailability = Boolean.parseBoolean(
@@ -254,7 +273,7 @@ public class UserProvisioningExecutor implements Executor {
         }
     }
 
-    private ExecutorResponse buildClientErrorResponseForActionFailure(ExecutorResponse response, UserStoreException e) {
+    private ExecutorResponse buildClientErrorResponseForActionFailure(ExecutorResponse response, Exception e) {
 
         if (e instanceof UserStoreClientException &&
                 UserActionError.PRE_UPDATE_PASSWORD_ACTION_EXECUTION_FAILED
@@ -271,6 +290,107 @@ public class UserProvisioningExecutor implements Executor {
             }
         }
         return response;
+    }
+
+    /**
+     * Updates the user credential for the password-recovery and ask-password (invited-user) flows. For the
+     * ask-password flow it additionally validates the confirmation code, publishes the pre-add-password event
+     * within the invited-user flow context, and records the resolved user id / user store domain on the flow user.
+     *
+     * @param context          Flow execution context.
+     * @param userStoreManager User store manager resolved for the flow user.
+     * @param username         Domain-qualified username whose credential is updated.
+     * @throws UserStoreException       If credential update fails.
+     * @throws IdentityEventException   If publishing the pre-add-password event fails.
+     * @throws IdentityRecoveryException If required ask-password properties are missing in the context.
+     */
+    private void updateCredential(FlowExecutionContext context, UserStoreManager userStoreManager, String username)
+            throws UserStoreException, IdentityEventException, IdentityRecoveryException {
+
+        boolean isAskPasswordFlow = INVITED_USER_REGISTRATION.getType().equalsIgnoreCase(context.getFlowType());
+
+        User user = null;
+        String confirmationCode = null;
+        String recoveryScenario = null;
+        if (isAskPasswordFlow) {
+            confirmationCode = (String) context.getProperty(CONFIRMATION_CODE_INPUT);
+            user = Utils.resolveUserFromContext(context);
+            if (StringUtils.isBlank(confirmationCode) || user == null) {
+                throw new IdentityRecoveryException("Required properties are missing in the context.");
+            }
+            recoveryScenario = getStringProperty(context, IdentityRecoveryConstants.RECOVERY_SCENARIO);
+        }
+
+        char[] password = resolvePassword(context);
+        try {
+            if (isAskPasswordFlow) {
+                enterFlow();
+                handlePrePasswordUpdate(user, recoveryScenario, confirmationCode);
+            }
+            userStoreManager.updateCredentialByAdmin(username, password);
+            if (isAskPasswordFlow) {
+                String userId = ((AbstractUserStoreManager) userStoreManager).getUserIDFromUserName(username);
+                context.getFlowUser().setUserId(userId);
+                context.getFlowUser().setUserStoreDomain(user.getUserStoreDomain());
+            }
+        } finally {
+            Arrays.fill(password, '\0');
+            if (isAskPasswordFlow) {
+                IdentityContext.getThreadLocalIdentityContext().exitFlow();
+            }
+        }
+    }
+
+    private char[] resolvePassword(FlowExecutionContext context) {
+
+        return context.getFlowUser().getUserCredentials()
+                .getOrDefault(PASSWORD_KEY, new DefaultPasswordGenerator().generatePassword());
+    }
+
+    private String getStringProperty(FlowExecutionContext context, String key) {
+
+        Object value = context.getProperty(key);
+        return (value != null) ? value.toString() : null;
+    }
+
+    private void handlePrePasswordUpdate(User user, String recoveryScenario, String confirmationCode)
+            throws IdentityEventException {
+
+        publishEvent(user, confirmationCode, IdentityEventConstants.Event.PRE_ADD_NEW_PASSWORD, recoveryScenario);
+    }
+
+    private void enterFlow() {
+
+        Flow.InitiatingPersona initiatingPersona;
+        Flow existingFlow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
+
+        if (existingFlow != null) {
+            initiatingPersona = existingFlow.getInitiatingPersona();
+        } else {
+            initiatingPersona = Flow.InitiatingPersona.ADMIN;
+        }
+
+        Flow flow = new Flow.Builder()
+                .name(Flow.Name.INVITED_USER_REGISTRATION)
+                .initiatingPersona(initiatingPersona)
+                .build();
+
+        IdentityContext.getThreadLocalIdentityContext().enterFlow(flow);
+    }
+
+    private void publishEvent(User user, String code, String eventName, String recoveryScenario)
+            throws IdentityEventException {
+
+        HashMap<String, Object> properties = new HashMap<>();
+        properties.put(IdentityEventConstants.EventProperty.USER, user);
+        properties.put(IdentityEventConstants.EventProperty.USER_NAME, user.getUserName());
+        properties.put(IdentityEventConstants.EventProperty.TENANT_DOMAIN, user.getTenantDomain());
+        properties.put(IdentityEventConstants.EventProperty.USER_STORE_DOMAIN, user.getUserStoreDomain());
+        properties.put(IdentityEventConstants.EventProperty.RECOVERY_SCENARIO, recoveryScenario);
+        properties.put(CONFIRMATION_CODE, code);
+
+        Event identityMgtEvent = new Event(eventName, properties);
+        IdentityRecoveryServiceDataHolder.getInstance().getIdentityEventService().handleEvent(identityMgtEvent);
     }
 
     private FlowUser updateUserProfile(FlowExecutionContext context) throws FlowEngineException {
